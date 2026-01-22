@@ -9,7 +9,12 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config = {
+            allowUnfree = true;  # Required for steam-run
+          };
+        };
         
         # Game paths for reference
         steamPath = "$HOME/.local/share/Steam/steamapps/common/Neongarten";
@@ -24,8 +29,7 @@
             # ═══════════════════════════════════════════════════════════════
             godot_4                    # Godot 4 editor for creating mods
             godotpcktool               # PCK extraction/creation (critical!)
-            gdtoolkit                  # GDScript linter, formatter, parser
-            gdscript-formatter         # Fast GDScript formatter
+            gdtoolkit_4                # GDScript linter, formatter, parser (for Godot 4)
             
             # ═══════════════════════════════════════════════════════════════
             # REVERSE ENGINEERING
@@ -36,7 +40,7 @@
             # Binary analysis
             binutils                   # strings, objdump, etc.
             hexyl                      # Beautiful hex viewer
-            xxd                        # Hex dump utility
+            unixtools.xxd              # Hex dump utility
             
             # ═══════════════════════════════════════════════════════════════
             # 3D MODELING PIPELINE (For Evie)
