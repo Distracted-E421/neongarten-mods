@@ -41,3 +41,6 @@ tools/gdsdecomp/
 # Mod build outputs
 build/
 dist/
+
+# Original 4.3 backup (copyrighted game files)
+neongarten-(4.3)/

@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+# Asset Catalog - Identify and categorize game assets
+# Helps identify prologue vs main game assets
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="${GODOT_PROJECT:-$SCRIPT_DIR/../../recovered}"
+
+usage() {
+    cat <<EOF
+asset-catalog - Asset analysis and categorization tool
+
+USAGE:
+    asset-catalog <command> [options]
+
+COMMANDS:
+    prologue          List known/suspected prologue assets
+    modern            List confirmed modern assets  
+    compare <a> <b>   Create side-by-side comparison image
+    analyze           Full asset analysis report
+    textures          List all textures grouped by pattern
+    models            List all 3D models grouped by pattern
+    preview <asset>   Open asset in image viewer (textures/sprites)
+    montage <pattern> Create montage of matching assets
+
+PATTERNS:
+    Known prologue indicators:
+    - lame_* prefix
+    - Muted/desaturated colors
+    - Cruder polygon count
+    
+    Known modern indicators:
+    - T_UI_* prefix for UI sprites
+    - Vibrant cyberpunk colors
+
+EOF
+    exit 0
+}
+
+# Known prologue asset patterns
+PROLOGUE_PATTERNS=(
+    "lame_*"
+)
+
+# Known modern asset patterns  
+MODERN_PATTERNS=(
+    "T_UI_*"
+)
+
+cmd_prologue() {
+    echo '{"command":"prologue_assets","assets":['
+    local first=true
+    
+    for pattern in "${PROLOGUE_PATTERNS[@]}"; do
+        while IFS= read -r -d '' file; do
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                echo ","
+            fi
+            local rel_path="${file#$PROJECT_DIR/}"
+            local ext="${file##*.}"
+            local name=$(basename "$file" ".$ext")
+            echo -n "{\"name\":\"$name\",\"path\":\"$rel_path\",\"type\":\"$ext\",\"pattern\":\"$pattern\"}"
+        done < <(find "$PROJECT_DIR" -iname "$pattern" ! -path "*/.godot/*" -print0 2>/dev/null | sort -z)
+    done
+    
+    echo '],"patterns":['
+    printf '"%s",' "${PROLOGUE_PATTERNS[@]}" | sed 's/,$//'
+    echo ']}'
+}
+
+cmd_modern() {
+    echo '{"command":"modern_assets","assets":['
+    local first=true
+    
+    for pattern in "${MODERN_PATTERNS[@]}"; do
+        while IFS= read -r -d '' file; do
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                echo ","
+            fi
+            local rel_path="${file#$PROJECT_DIR/}"
+            local ext="${file##*.}"
+            local name=$(basename "$file" ".$ext")
+            echo -n "{\"name\":\"$name\",\"path\":\"$rel_path\",\"type\":\"$ext\",\"pattern\":\"$pattern\"}"
+        done < <(find "$PROJECT_DIR" -iname "$pattern" ! -path "*/.godot/*" -print0 2>/dev/null | sort -z)
+    done
+    
+    echo '],"patterns":['
+    printf '"%s",' "${MODERN_PATTERNS[@]}" | sed 's/,$//'
+    echo ']}'
+}
+
+cmd_textures() {
+    echo '{"command":"texture_analysis","groups":{'
+    
+    # Group by prefix pattern
+    local prefixes=("T_UI_" "T_" "lame_" "sprite_" "")
+    local first_group=true
+    
+    for prefix in "${prefixes[@]}"; do
+        local pattern="${prefix}*.png"
+        local count=$(find "$PROJECT_DIR" -iname "$pattern" ! -path "*/.godot/*" 2>/dev/null | wc -l)
+        
+        if [[ $count -gt 0 ]]; then
+            if [[ "$first_group" == true ]]; then
+                first_group=false
+            else
+                echo ","
+            fi
+            
+            local label="${prefix:-no_prefix}"
+            echo -n "\"$label\":{\"count\":$count,\"sample\":["
+            
+            local first=true
+            while IFS= read -r -d '' file; do
+                if [[ "$first" == true ]]; then
+                    first=false
+                else
+                    echo -n ","
+                fi
+                local rel="${file#$PROJECT_DIR/}"
+                echo -n "\"$rel\""
+            done < <(find "$PROJECT_DIR" -iname "$pattern" ! -path "*/.godot/*" -print0 2>/dev/null | head -z -3)
+            
+            echo -n "]}"
+        fi
+    done
+    
+    echo '}}'
+}
+
+cmd_models() {
+    echo '{"command":"model_analysis",'
+    
+    local total=$(find "$PROJECT_DIR" -name "*.glb" ! -path "*/.godot/*" 2>/dev/null | wc -l)
+    echo "\"total\":$total,"
+    
+    # Check for lame_ models
+    local prologue=$(find "$PROJECT_DIR" -iname "lame_*.glb" ! -path "*/.godot/*" 2>/dev/null | wc -l)
+    echo "\"prologue_suspected\":$prologue,"
+    
+    # Sample models
+    echo '"sample":['
+    local first=true
+    while IFS= read -r -d '' file; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        local rel="${file#$PROJECT_DIR/}"
+        local name=$(basename "$file" .glb)
+        # Get file size as rough complexity indicator
+        local size=$(stat -c%s "$file" 2>/dev/null || echo "0")
+        echo -n "{\"name\":\"$name\",\"path\":\"$rel\",\"size_bytes\":$size}"
+    done < <(find "$PROJECT_DIR" -name "*.glb" ! -path "*/.godot/*" -print0 2>/dev/null | sort -z | head -z -10)
+    echo ']}'
+}
+
+cmd_preview() {
+    local asset="$1"
+    local full_path="$PROJECT_DIR/$asset"
+    
+    if [[ ! -f "$full_path" ]]; then
+        # Try finding it
+        full_path=$(find "$PROJECT_DIR" -name "*$asset*" ! -path "*/.godot/*" | head -1)
+    fi
+    
+    if [[ -z "$full_path" ]] || [[ ! -f "$full_path" ]]; then
+        echo '{"error":"asset not found","query":"'$asset'"}'
+        exit 1
+    fi
+    
+    local ext="${full_path##*.}"
+    
+    case "$ext" in
+        png|jpg|jpeg|webp)
+            # Open in default image viewer
+            xdg-open "$full_path" 2>/dev/null &
+            echo '{"opened":"'$full_path'","viewer":"xdg-open"}'
+            ;;
+        glb)
+            # Could open in Blender or 3D viewer
+            echo '{"notice":"3D model - use Blender or Godot to view","path":"'$full_path'"}'
+            ;;
+        *)
+            echo '{"error":"unsupported type","extension":"'$ext'"}'
+            ;;
+    esac
+}
+
+cmd_montage() {
+    local pattern="$1"
+    local output="${2:-/tmp/asset_montage_$(date +%Y%m%d_%H%M%S).png}"
+    
+    if ! command -v montage &>/dev/null; then
+        echo '{"error":"ImageMagick montage not installed"}'
+        exit 1
+    fi
+    
+    # Find matching images
+    local images=()
+    while IFS= read -r -d '' file; do
+        images+=("$file")
+    done < <(find "$PROJECT_DIR" -iname "$pattern" \( -name "*.png" -o -name "*.jpg" \) ! -path "*/.godot/*" -print0 2>/dev/null | head -z -20)
+    
+    if [[ ${#images[@]} -eq 0 ]]; then
+        echo '{"error":"no matching images found","pattern":"'$pattern'"}'
+        exit 1
+    fi
+    
+    montage "${images[@]}" -tile 5x -geometry 128x128+2+2 -background '#1a1a1a' "$output"
+    
+    echo '{"success":true,"output":"'$output'","count":'${#images[@]}',"pattern":"'$pattern'"}'
+}
+
+cmd_analyze() {
+    echo '{"command":"full_analysis",'
+    
+    # Counts
+    local models=$(find "$PROJECT_DIR" -name "*.glb" ! -path "*/.godot/*" | wc -l)
+    local textures=$(find "$PROJECT_DIR" \( -name "*.png" -o -name "*.jpg" \) ! -path "*/.godot/*" | wc -l)
+    local scenes=$(find "$PROJECT_DIR" -name "*.tscn" ! -path "*/.godot/*" | wc -l)
+    local structures=$(find "$PROJECT_DIR" -name "*.tres" -path "*/structures/*" | wc -l)
+    
+    echo "\"counts\":{\"models\":$models,\"textures\":$textures,\"scenes\":$scenes,\"structures\":$structures},"
+    
+    # Prologue detection
+    local prologue_models=$(find "$PROJECT_DIR" -iname "lame_*.glb" | wc -l)
+    local prologue_textures=$(find "$PROJECT_DIR" -iname "lame_*.png" | wc -l)
+    
+    echo "\"prologue_detected\":{\"models\":$prologue_models,\"textures\":$prologue_textures,\"pattern\":\"lame_*\"},"
+    
+    # Modern detection
+    local modern_ui=$(find "$PROJECT_DIR" -iname "T_UI_*.png" | wc -l)
+    
+    echo "\"modern_detected\":{\"ui_sprites\":$modern_ui,\"pattern\":\"T_UI_*\"},"
+    
+    # List confirmed prologue
+    echo '"prologue_assets":['
+    local first=true
+    while IFS= read -r -d '' file; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        local rel="${file#$PROJECT_DIR/}"
+        echo -n "\"$rel\""
+    done < <(find "$PROJECT_DIR" -iname "lame_*" ! -path "*/.godot/*" -print0 2>/dev/null | sort -z)
+    echo ']}'
+}
+
+cmd_compare() {
+    local asset_a="$1"
+    local asset_b="$2"
+    local output="${3:-/tmp/compare_$(date +%Y%m%d_%H%M%S).png}"
+    
+    if ! command -v convert &>/dev/null; then
+        echo '{"error":"ImageMagick not installed"}'
+        exit 1
+    fi
+    
+    local path_a=$(find "$PROJECT_DIR" -iname "*$asset_a*" \( -name "*.png" -o -name "*.jpg" \) ! -path "*/.godot/*" | head -1)
+    local path_b=$(find "$PROJECT_DIR" -iname "*$asset_b*" \( -name "*.png" -o -name "*.jpg" \) ! -path "*/.godot/*" | head -1)
+    
+    if [[ -z "$path_a" ]] || [[ -z "$path_b" ]]; then
+        echo '{"error":"could not find both assets","a":"'$asset_a'","b":"'$asset_b'"}'
+        exit 1
+    fi
+    
+    convert "$path_a" "$path_b" +append -background '#1a1a1a' -gravity center "$output"
+    
+    echo '{"success":true,"output":"'$output'","a":"'$path_a'","b":"'$path_b'"}'
+}
+
+# Main dispatch
+case "${1:-help}" in
+    prologue)
+        cmd_prologue
+        ;;
+    modern)
+        cmd_modern
+        ;;
+    textures)
+        cmd_textures
+        ;;
+    models)
+        cmd_models
+        ;;
+    preview)
+        shift
+        cmd_preview "$@"
+        ;;
+    montage)
+        shift
+        cmd_montage "$@"
+        ;;
+    compare)
+        shift
+        cmd_compare "$@"
+        ;;
+    analyze)
+        cmd_analyze
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        usage
+        ;;
+esac
+

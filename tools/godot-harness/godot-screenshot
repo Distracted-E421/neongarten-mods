@@ -1,0 +1,90 @@
+#!/usr/bin/env nu
+# Godot Screenshot Tool - Captures the Godot editor window
+# Outputs: JSON with image path and metadata, or base64 if --base64
+
+def main [
+    --output: string = ""      # Output file path (auto-generated if empty)
+    --base64                   # Return base64 instead of file path
+    --window: string = ""      # Window title substring to match (default: "Godot")
+    --format: string = "png"   # Image format: png, jpg
+    --delay: int = 0           # Delay in ms before capture
+] {
+    let match_title = if $window == "" { "Godot" } else { $window }
+    
+    # Detect display server
+    let session_type = ($env | get -i XDG_SESSION_TYPE | default "x11")
+    
+    # Generate output path if not specified
+    let timestamp = (date now | format date "%Y%m%d_%H%M%S")
+    let out_path = if $output == "" {
+        $"/tmp/godot_screenshot_($timestamp).($format)"
+    } else {
+        $output
+    }
+    
+    # Add delay if requested
+    if $delay > 0 {
+        sleep ($delay | into duration --unit ms)
+    }
+    
+    let result = if $session_type == "wayland" {
+        # Try grim + slurp for Wayland (KDE/wlroots)
+        # First, find the Godot window geometry via kdotool or similar
+        let window_info = try {
+            # Use spectacle for KDE Wayland - it can capture specific windows
+            run-external "spectacle" "-b" "-a" "-o" $out_path
+            { success: true, method: "spectacle" }
+        } catch {
+            # Fallback: capture entire screen
+            run-external "grim" $out_path
+            { success: true, method: "grim-fullscreen" }
+        }
+        $window_info
+    } else {
+        # X11 - use xdotool + import (ImageMagick)
+        let window_id = try {
+            xdotool search --name $match_title | lines | first
+        } catch {
+            ""
+        }
+        
+        if $window_id != "" {
+            run-external "import" "-window" $window_id $out_path
+            { success: true, method: "import", window_id: $window_id }
+        } else {
+            # Fallback to active window
+            run-external "import" "-window" "root" $out_path
+            { success: true, method: "import-root" }
+        }
+    }
+    
+    # Check if file was created
+    if not ($out_path | path exists) {
+        { error: "Screenshot failed", path: $out_path } | to json
+        exit 1
+    }
+    
+    let file_size = (ls $out_path | get size | first)
+    
+    if $base64 {
+        let b64 = (open $out_path --raw | encode base64)
+        {
+            success: true
+            format: $format
+            size: $file_size
+            timestamp: $timestamp
+            method: ($result | get method)
+            base64: $b64
+        } | to json
+    } else {
+        {
+            success: true
+            path: $out_path
+            format: $format
+            size: $file_size
+            timestamp: $timestamp
+            method: ($result | get method)
+        } | to json
+    }
+}
+

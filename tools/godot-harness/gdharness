@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+# gdharness - Godot Editor/Project Interaction Harness
+# A lightweight CLI for AI agents to interact with Godot projects
+#
+# Usage:
+#   gdharness screenshot [output.png]     - Capture Godot window
+#   gdharness run <script.gd> [args]      - Run GDScript headlessly
+#   gdharness query <expression>          - Evaluate GDScript expression
+#   gdharness list-scenes                 - List all scenes in project
+#   gdharness list-scripts                - List all scripts in project
+#   gdharness list-resources <type>       - List resources by type
+#   gdharness export <preset> [output]    - Export project
+#   gdharness validate                    - Check project for errors
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="${GODOT_PROJECT:-$SCRIPT_DIR/../../recovered}"
+GODOT_BIN="${GODOT_BIN:-godot}"
+
+# Colors for terminal output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+usage() {
+    cat <<EOF
+gdharness - Godot Project Interaction Harness for AI Agents
+
+USAGE:
+    gdharness <command> [options]
+
+COMMANDS:
+    screenshot [file]       Capture the Godot editor window
+    run <script.gd>         Execute a GDScript file headlessly
+    query <expr>            Evaluate a GDScript expression
+    list-scenes             List all .tscn files in project
+    list-scripts            List all .gd files in project  
+    list-resources [type]   List resources (.tres, .res, etc)
+    list-structures         List all building structure resources
+    validate                Check project for parse errors
+    export <preset>         Export project using preset name
+    info                    Show project information
+
+ENVIRONMENT:
+    GODOT_PROJECT    Path to project directory (default: ./recovered)
+    GODOT_BIN        Godot executable (default: godot)
+
+EXAMPLES:
+    gdharness screenshot /tmp/godot.png
+    gdharness list-structures
+    gdharness query "Structure.Rarities.RARE"
+    gdharness run scripts/dump_buildings.gd
+
+EOF
+    exit 0
+}
+
+cmd_screenshot() {
+    local output="${1:-/tmp/godot_$(date +%Y%m%d_%H%M%S).png}"
+    "$SCRIPT_DIR/gshot" "$output"
+}
+
+cmd_list_scenes() {
+    echo '{"command":"list-scenes","results":['
+    local first=true
+    while IFS= read -r -d '' file; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        local rel_path="${file#$PROJECT_DIR/}"
+        echo -n "\"$rel_path\""
+    done < <(find "$PROJECT_DIR" -name "*.tscn" -print0 | sort -z)
+    echo ']}'
+}
+
+cmd_list_scripts() {
+    echo '{"command":"list-scripts","results":['
+    local first=true
+    while IFS= read -r -d '' file; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        local rel_path="${file#$PROJECT_DIR/}"
+        echo -n "\"$rel_path\""
+    done < <(find "$PROJECT_DIR" -name "*.gd" -print0 | sort -z)
+    echo ']}'
+}
+
+cmd_list_resources() {
+    local pattern="${1:-*.tres}"
+    echo '{"command":"list-resources","pattern":"'"$pattern"'","results":['
+    local first=true
+    while IFS= read -r -d '' file; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        local rel_path="${file#$PROJECT_DIR/}"
+        echo -n "\"$rel_path\""
+    done < <(find "$PROJECT_DIR" -name "$pattern" -print0 | sort -z)
+    echo ']}'
+}
+
+cmd_list_structures() {
+    # List all building/structure .tres files with their key properties
+    echo '{"command":"list-structures","structures":['
+    local first=true
+    local structures_dir="$PROJECT_DIR/structures"
+    
+    if [[ ! -d "$structures_dir" ]]; then
+        structures_dir="$PROJECT_DIR"
+    fi
+    
+    while IFS= read -r -d '' file; do
+        # Extract key info from .tres files
+        local name=$(basename "$file" .tres)
+        local rel_path="${file#$PROJECT_DIR/}"
+        
+        # Try to extract properties from the file
+        local rarity=$(grep -oP 'rarity\s*=\s*\K\d+' "$file" 2>/dev/null || echo "-1")
+        local legality=$(grep -oP 'legality\s*=\s*\K\d+' "$file" 2>/dev/null || echo "-1")
+        local income=$(grep -oP 'income\s*=\s*\K-?\d+' "$file" 2>/dev/null || echo "0")
+        
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        
+        cat <<STRUCT
+{"name":"$name","path":"$rel_path","rarity":$rarity,"legality":$legality,"income":$income}
+STRUCT
+    done < <(find "$structures_dir" -name "*.tres" -print0 2>/dev/null | sort -z)
+    echo ']}'
+}
+
+cmd_validate() {
+    echo '{"command":"validate","checking":"'$PROJECT_DIR'"}'
+    
+    # Run Godot in headless mode to check for parse errors
+    local output
+    output=$("$GODOT_BIN" --headless --path "$PROJECT_DIR" --check-only 2>&1) || true
+    
+    local errors=$(echo "$output" | grep -c "ERROR:" || echo "0")
+    local warnings=$(echo "$output" | grep -c "WARNING:" || echo "0")
+    
+    echo '{"errors":'$errors',"warnings":'$warnings',"output":'
+    echo "$output" | head -50 | jq -R -s '.'
+    echo '}'
+}
+
+cmd_info() {
+    local project_file="$PROJECT_DIR/project.godot"
+    if [[ ! -f "$project_file" ]]; then
+        echo '{"error":"project.godot not found","path":"'$project_file'"}'
+        exit 1
+    fi
+    
+    local name=$(grep -oP 'config/name\s*=\s*"\K[^"]+' "$project_file" || echo "Unknown")
+    local version=$(grep -oP 'config/version\s*=\s*"\K[^"]+' "$project_file" || echo "Unknown")
+    local features=$(grep -oP 'config/features\s*=\s*PackedStringArray\(\K[^)]+' "$project_file" | tr -d '"' | tr ',' ' ' || echo "")
+    
+    local scene_count=$(find "$PROJECT_DIR" -name "*.tscn" | wc -l)
+    local script_count=$(find "$PROJECT_DIR" -name "*.gd" | wc -l)
+    local resource_count=$(find "$PROJECT_DIR" -name "*.tres" | wc -l)
+    
+    jq -n \
+        --arg name "$name" \
+        --arg version "$version" \
+        --arg features "$features" \
+        --arg path "$PROJECT_DIR" \
+        --argjson scenes "$scene_count" \
+        --argjson scripts "$script_count" \
+        --argjson resources "$resource_count" \
+        '{name: $name, version: $version, features: $features, path: $path, counts: {scenes: $scenes, scripts: $scripts, resources: $resources}}'
+}
+
+cmd_run() {
+    local script="$1"
+    shift
+    
+    if [[ ! -f "$script" ]] && [[ ! -f "$PROJECT_DIR/$script" ]]; then
+        echo '{"error":"script not found","script":"'$script'"}'
+        exit 1
+    fi
+    
+    "$GODOT_BIN" --headless --path "$PROJECT_DIR" --script "$script" "$@" 2>&1
+}
+
+cmd_query() {
+    local expr="$1"
+    
+    # Create a temporary script to evaluate the expression
+    local tmp_script=$(mktemp /tmp/gdquery_XXXXXX.gd)
+    cat > "$tmp_script" <<GD
+extends SceneTree
+
+func _init():
+    var result = $expr
+    print("QUERY_RESULT:", result)
+    quit()
+GD
+    
+    local output
+    output=$("$GODOT_BIN" --headless --path "$PROJECT_DIR" --script "$tmp_script" 2>&1) || true
+    rm -f "$tmp_script"
+    
+    local result=$(echo "$output" | grep "QUERY_RESULT:" | sed 's/QUERY_RESULT://')
+    echo '{"query":"'"$expr"'","result":"'"$result"'"}'
+}
+
+# Main dispatch
+case "${1:-help}" in
+    screenshot)
+        shift
+        cmd_screenshot "$@"
+        ;;
+    list-scenes)
+        cmd_list_scenes
+        ;;
+    list-scripts)
+        cmd_list_scripts
+        ;;
+    list-resources)
+        shift
+        cmd_list_resources "${1:-*.tres}"
+        ;;
+    list-structures)
+        cmd_list_structures
+        ;;
+    validate)
+        cmd_validate
+        ;;
+    info)
+        cmd_info
+        ;;
+    run)
+        shift
+        cmd_run "$@"
+        ;;
+    query)
+        shift
+        cmd_query "$@"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        usage
+        ;;
+esac
+

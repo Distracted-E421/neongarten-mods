@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# gshot - Quick Godot screenshot tool for AI harness
+# Usage: gshot [output.png]
+# Returns JSON with file path
+
+set -euo pipefail
+
+OUTPUT="${1:-/tmp/godot_$(date +%Y%m%d_%H%M%S).png}"
+SESSION_TYPE="${XDG_SESSION_TYPE:-x11}"
+
+capture_screenshot() {
+    if [[ "$SESSION_TYPE" == "wayland" ]]; then
+        # KDE Wayland - use spectacle for active window
+        if command -v spectacle &>/dev/null; then
+            spectacle -b -a -o "$OUTPUT" 2>/dev/null
+            echo "spectacle"
+        elif command -v grim &>/dev/null; then
+            # Fallback to full screen
+            grim "$OUTPUT"
+            echo "grim"
+        else
+            echo "error: no wayland screenshot tool found" >&2
+            return 1
+        fi
+    else
+        # X11 - find Godot window and capture
+        if command -v xdotool &>/dev/null && command -v import &>/dev/null; then
+            WINDOW_ID=$(xdotool search --name "Godot" 2>/dev/null | head -1 || true)
+            if [[ -n "$WINDOW_ID" ]]; then
+                import -window "$WINDOW_ID" "$OUTPUT"
+                echo "import-window"
+            else
+                import -window root "$OUTPUT"
+                echo "import-root"
+            fi
+        elif command -v scrot &>/dev/null; then
+            scrot -u "$OUTPUT"
+            echo "scrot"
+        else
+            echo "error: no x11 screenshot tool found" >&2
+            return 1
+        fi
+    fi
+}
+
+METHOD=$(capture_screenshot)
+
+if [[ -f "$OUTPUT" ]]; then
+    SIZE=$(stat -c%s "$OUTPUT")
+    cat <<EOF
+{"success":true,"path":"$OUTPUT","method":"$METHOD","size":$SIZE}
+EOF
+else
+    cat <<EOF
+{"success":false,"error":"screenshot failed","method":"$METHOD"}
+EOF
+    exit 1
+fi
+
