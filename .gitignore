@@ -1,0 +1,47 @@
+# Build outputs
+result
+result-*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Game files (don't commit game assets)
+*.exe
+*.dll
+*.assets
+*.resource
+
+# Large binary files
+*.psd
+*.xcf
+*.blend1
+*.blend2
+
+# Temporary
+*.tmp
+*.bak
+*.log
+
+# Secrets
+.env
+*.secret
+
+# Nix
+.direnv/
+

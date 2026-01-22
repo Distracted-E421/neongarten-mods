@@ -1,0 +1,72 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-01-20T00:00:00Z",
+  "whitelist": {
+    "documentation": [
+      "github.com",
+      "docs.github.com",
+      "gist.github.com",
+      "raw.githubusercontent.com",
+      "arxiv.org",
+      "huggingface.co",
+      "nixos.wiki",
+      "search.nixos.org",
+      "wiki.archlinux.org",
+      "stackoverflow.com",
+      "developer.mozilla.org",
+      "en.wikipedia.org"
+    ],
+    "search_engines": [
+      "google.com",
+      "duckduckgo.com",
+      "kagi.com",
+      "bing.com"
+    ],
+    "development": [
+      "playwright.dev",
+      "rust-lang.org",
+      "docs.rs",
+      "crates.io",
+      "pypi.org",
+      "npmjs.com",
+      "pkg.go.dev",
+      "elixir-lang.org",
+      "hexdocs.pm"
+    ],
+    "local_services": [
+      "localhost",
+      "127.0.0.1",
+      "homeassistant.local",
+      "grafana.local",
+      "*.local"
+    ],
+    "trusted_services": [
+      "tailscale.com",
+      "cloudflare.com"
+    ],
+    "user_added": []
+  },
+  "blacklist": {
+    "url_shorteners": [
+      "bit.ly",
+      "tinyurl.com",
+      "goo.gl",
+      "t.co",
+      "shorturl.at",
+      "is.gd",
+      "v.gd",
+      "ow.ly"
+    ],
+    "tracking_analytics": [
+      "doubleclick.net",
+      "googlesyndication.com",
+      "googleadservices.com",
+      "facebook.com/tr",
+      "analytics.google.com"
+    ],
+    "known_malicious": [],
+    "user_blocked": []
+  },
+  "verification_log": []
+}
+

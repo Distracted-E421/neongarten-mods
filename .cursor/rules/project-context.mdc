@@ -1,0 +1,54 @@
+---
+description: Neongarten modding project context and conventions
+alwaysApply: true
+---
+
+# Neongarten Modding Project
+
+## Project Overview
+
+This is a community modding toolkit for **Neongarten**, a minimalist cyberpunk city builder by Moonroof Studios.
+
+## Team
+
+- **e421** - Programming, infrastructure, game design
+- **Evie** - 3D modeling, textures, visual design (Wacom tablet)
+
+## Project Goals
+
+1. **Gameplay Mods** - Larger maps, new tiles, balance, endless mode
+2. **Content Mods** - New mechanics, story, challenges
+3. **Visual Mods** - Custom models, textures, UI
+
+## Technical Status
+
+- **Game Engine**: TBD (likely Unity)
+- **Modding Framework**: TBD (likely BepInEx if Unity)
+- **Asset Formats**: Under investigation
+
+## Key Documents
+
+- `docs/GAME_ANALYSIS.md` - Deep dive into game mechanics
+- `docs/TECHNICAL_RESEARCH.md` - Engine/format research
+- `docs/ART_GUIDELINES.md` - Guidelines for Evie's assets
+
+## Conventions
+
+### Code Style
+- Use descriptive names
+- Document all public functions
+- Follow existing game patterns where discovered
+
+### File Organization
+```
+mods/gameplay/   - Gameplay modification mods
+mods/content/    - New content mods
+mods/visual/     - Visual/aesthetic mods
+tools/           - Development tools
+assets/          - Art assets (Evie's work)
+```
+
+### Git Conventions
+- Feature branches: `feature/<name>`
+- Mod branches: `mod/<mod-name>`
+- Commit messages: `type(scope): description`

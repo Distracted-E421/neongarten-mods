@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# AI Security Tools - Unified CLI for browser automation security
+#
+# Usage:
+#   ai-security domain <command>      Domain whitelist/blacklist management
+#   ai-security url <command>         URL/path analysis and labyrinth detection
+#   ai-security scan-image <path>     Scan image for injection
+#   ai-security preview <url>         Sandbox preview URL
+#   ai-security check <url>           Full navigation check
+#
+# Examples:
+#   ai-security domain list
+#   ai-security domain unsafe evil.com --reason "Found malware"
+#   ai-security url analyze https://site.com/deep/path?redirect=xyz
+#   ai-security url session create --url https://entry-point.com
+#   ai-security scan-image screenshot.png
+#   ai-security preview https://unknown-site.com
+
+SECURITY_DIR="/home/e421/homelab/.cursor/security"
+
+case "$1" in
+  domain|d)
+    shift
+    nu "$SECURITY_DIR/domain-manager.nu" "$@"
+    ;;
+  
+  url|u|path)
+    shift
+    python3 "$SECURITY_DIR/url-analyzer.py" "$@"
+    ;;
+    
+  scan-image|image|i)
+    shift
+    python3 "$SECURITY_DIR/image-injection-detector.py" "$@"
+    ;;
+    
+  preview|sandbox|p)
+    shift
+    python3 "$SECURITY_DIR/sandbox-preview.py" "$@"
+    ;;
+    
+  check|c)
+    shift
+    URL="$1"
+    shift
+    nu "$SECURITY_DIR/../hooks/navigation-gating.nu" --url "$URL" "$@"
+    ;;
+  
+  session|s)
+    shift
+    python3 "$SECURITY_DIR/url-analyzer.py" session "$@"
+    ;;
+    
+  help|--help|-h)
+    echo "AI Security Tools - Browser Automation Security"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "DOMAIN MANAGEMENT"
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ai-security domain list              Show all domains"
+    echo "  ai-security domain add <domain>      Add to whitelist"
+    echo "  ai-security domain block <domain>    Add to blacklist"
+    echo "  ai-security domain unsafe <domain>   Quick move to blacklist"
+    echo "  ai-security domain remove <domain>   Remove from all lists"
+    echo "  ai-security domain history           Show verification log"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "URL/PATH ANALYSIS (Labyrinth Detection)"
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ai-security url analyze <url>        Analyze URL structure"
+    echo "  ai-security url check-path <url>     Check against path rules"
+    echo ""
+    echo "  Path rules:"
+    echo "    ai-security url path-rule list"
+    echo "    ai-security url path-rule add --domain <d> --path <p> --type allow|block"
+    echo ""
+    echo "  Session tracking (labyrinth detection):"
+    echo "    ai-security session create --url <entry_url>"
+    echo "    ai-security session track --id <session_id> --url <url>"
+    echo "    ai-security session summary --id <session_id>"
+    echo "    ai-security session list"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "IMAGE SCANNING"
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ai-security scan-image <path>        Scan local image"
+    echo "  ai-security scan-image --url <url>   Scan image from URL"
+    echo "  ai-security scan-image --batch <dir> Scan directory"
+    echo "    Options: --json, --quiet"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "SANDBOX PREVIEW"
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ai-security preview <url>            Sandbox preview URL"
+    echo "    Options: --visible, --report, --json"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "FULL SECURITY CHECK"
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ai-security check <url>              Full navigation check"
+    echo "  ai-security check <url> --analyze-only   Analyze without prompting"
+    echo "  ai-security check <url> --start-session  Start session tracking"
+    echo "  ai-security check <url> --session <id>   Continue existing session"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "Configuration files:"
+    echo "  Domain lists:  $SECURITY_DIR/domain-lists.json"
+    echo "  Path rules:    $SECURITY_DIR/path-rules.json"
+    echo "  Sessions:      $SECURITY_DIR/navigation-sessions.json"
+    ;;
+    
+  *)
+    echo "Unknown command: $1"
+    echo "Run 'ai-security help' for usage"
+    exit 1
+    ;;
+esac
+
