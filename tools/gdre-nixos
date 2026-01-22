@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# NixOS wrapper for gdsdecomp - uses steam-run for dynamic linking
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec steam-run "$SCRIPT_DIR/gdsdecomp/gdre_tools.x86_64" "$@"

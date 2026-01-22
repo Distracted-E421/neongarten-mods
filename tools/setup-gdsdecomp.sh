@@ -85,6 +85,20 @@ if [ -n "$GDRE_BIN" ]; then
     # Create convenience symlink
     ln -sf "$GDRE_BIN" "$TOOLS_DIR/gdre"
     echo "🔗 Created symlink: $TOOLS_DIR/gdre"
+    
+    # Create NixOS wrapper script (uses steam-run for dynamic linking)
+    cat > "$TOOLS_DIR/gdre-nixos" << 'WRAPPER'
+#!/usr/bin/env bash
+# NixOS wrapper for gdsdecomp - uses steam-run for dynamic linking
+# Required because gdsdecomp is a dynamically linked binary
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec steam-run "$SCRIPT_DIR/gdsdecomp/gdre_tools.x86_64" "$@"
+WRAPPER
+    chmod +x "$TOOLS_DIR/gdre-nixos"
+    echo "🐧 Created NixOS wrapper: $TOOLS_DIR/gdre-nixos"
+    echo ""
+    echo "   📍 On NixOS: ./tools/gdre-nixos [options]"
+    echo "   📍 GUI mode: steam-run ./tools/gdsdecomp/gdre_tools.x86_64"
 else
     echo "⚠️  Could not find gdre_tools binary after extraction"
     echo "   Contents of $GDSDECOMP_DIR:"
