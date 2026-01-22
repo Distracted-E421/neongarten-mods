@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# samsung-capture - Non-focus-stealing Samsung TV capture for Godot
+# Captures the dedicated AI workspace display without interrupting user
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/samsung-config.json"
+OUTPUT_DIR="/home/e421/neongarten-mods"
+
+# Default coordinates (user can calibrate these)
+DEFAULT_X=0
+DEFAULT_Y=3280
+DEFAULT_WIDTH=1920
+DEFAULT_HEIGHT=1350  # 1080 * 1.25 for scaling
+
+# Load config if exists
+if [[ -f "$CONFIG_FILE" ]]; then
+    CROP_X=$(jq -r '.x // empty' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_X")
+    CROP_Y=$(jq -r '.y // empty' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_Y")
+    CROP_WIDTH=$(jq -r '.width // empty' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_WIDTH")
+    CROP_HEIGHT=$(jq -r '.height // empty' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_HEIGHT")
+else
+    CROP_X=$DEFAULT_X
+    CROP_Y=$DEFAULT_Y
+    CROP_WIDTH=$DEFAULT_WIDTH
+    CROP_HEIGHT=$DEFAULT_HEIGHT
+fi
+
+usage() {
+    cat <<EOF
+samsung-capture - Capture Samsung TV display without focus stealing
+
+USAGE:
+    samsung-capture [command] [options]
+
+COMMANDS:
+    capture [output.png]    Take a screenshot of the Samsung TV
+    calibrate              Interactive calibration of crop coordinates
+    config                 Show current configuration
+    set X Y WIDTH HEIGHT   Manually set crop coordinates
+
+CONFIGURATION:
+    Current: ${CROP_WIDTH}x${CROP_HEIGHT}+${CROP_X}+${CROP_Y}
+    Config file: $CONFIG_FILE
+
+EXAMPLES:
+    samsung-capture capture                    # Save to default location
+    samsung-capture capture /tmp/godot.png    # Save to specific path
+    samsung-capture set 0 3280 1920 1350      # Set exact coordinates
+
+EOF
+    exit 0
+}
+
+cmd_capture() {
+    local output="${1:-$OUTPUT_DIR/samsung_capture_$(date +%Y%m%d_%H%M%S).png}"
+    local temp_full="/tmp/samsung_full_$$.png"
+    
+    # Capture full desktop without focus (spectacle -b = background)
+    spectacle -b -f -o "$temp_full" 2>/dev/null
+    
+    # Crop to Samsung TV region
+    magick "$temp_full" -crop "${CROP_WIDTH}x${CROP_HEIGHT}+${CROP_X}+${CROP_Y}" +repage "$output"
+    rm -f "$temp_full"
+    
+    # Return JSON result
+    local size=$(stat -c%s "$output")
+    jq -n \
+        --arg path "$output" \
+        --argjson width "$CROP_WIDTH" \
+        --argjson height "$CROP_HEIGHT" \
+        --argjson x "$CROP_X" \
+        --argjson y "$CROP_Y" \
+        --argjson size "$size" \
+        --arg timestamp "$(date -Iseconds)" \
+        '{success: true, path: $path, crop: {x: $x, y: $y, width: $width, height: $height}, size: $size, timestamp: $timestamp}'
+}
+
+cmd_config() {
+    jq -n \
+        --argjson x "$CROP_X" \
+        --argjson y "$CROP_Y" \
+        --argjson width "$CROP_WIDTH" \
+        --argjson height "$CROP_HEIGHT" \
+        --arg config_file "$CONFIG_FILE" \
+        '{x: $x, y: $y, width: $width, height: $height, config_file: $config_file}'
+}
+
+cmd_set() {
+    local x="${1:-$CROP_X}"
+    local y="${2:-$CROP_Y}"
+    local width="${3:-$CROP_WIDTH}"
+    local height="${4:-$CROP_HEIGHT}"
+    
+    jq -n \
+        --argjson x "$x" \
+        --argjson y "$y" \
+        --argjson width "$width" \
+        --argjson height "$height" \
+        '{x: $x, y: $y, width: $width, height: $height}' > "$CONFIG_FILE"
+    
+    echo "Configuration saved to $CONFIG_FILE"
+    cmd_config
+}
+
+cmd_calibrate() {
+    echo "=== Samsung TV Calibration ==="
+    echo ""
+    echo "Taking full desktop screenshot..."
+    local temp_full="/tmp/calibrate_full_$$.png"
+    spectacle -b -f -o "$temp_full" 2>/dev/null
+    
+    echo "Full desktop size: $(identify -format '%wx%h' "$temp_full")"
+    echo ""
+    echo "Current crop: ${CROP_WIDTH}x${CROP_HEIGHT}+${CROP_X}+${CROP_Y}"
+    echo ""
+    echo "To calibrate:"
+    echo "1. Open the full screenshot: xdg-open $temp_full"
+    echo "2. Find the Samsung TV boundaries (look for Godot window)"
+    echo "3. Note the top-left corner (X, Y) and size (WIDTH, HEIGHT)"
+    echo "4. Run: samsung-capture set X Y WIDTH HEIGHT"
+    echo ""
+    echo "Tip: The Samsung TV at 125% scale should be ~1920x1350 in native pixels"
+}
+
+# Main dispatch
+case "${1:-help}" in
+    capture)
+        shift
+        cmd_capture "$@"
+        ;;
+    calibrate)
+        cmd_calibrate
+        ;;
+    config)
+        cmd_config
+        ;;
+    set)
+        shift
+        cmd_set "$@"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        usage
+        ;;
+esac
+
