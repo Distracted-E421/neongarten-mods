@@ -4,144 +4,157 @@ Community modding toolkit for **Neongarten** - a minimalist cyberpunk city build
 
 ## 🎮 About Neongarten
 
-- **Genre**: Turn-based Strategy / City Builder / Roguelite
-- **Aesthetic**: Minimalist Cyberpunk / Neon
-- **Inspirations**: ISLANDERS + Luck Be a Landlord
-- **Developer**: Moonroof Studios
-- **Publisher**: Goblinz Publishing
-- **Steam**: [store.steampowered.com/app/3211750](https://store.steampowered.com/app/3211750/Neongarten/)
-- **Discord**: [discord.gg/HvtvGbSwax](https://discord.gg/HvtvGbSwax)
+| | |
+|---|---|
+| **Genre** | Turn-based Strategy / City Builder / Roguelite |
+| **Engine** | **Godot 4.3.0** ✅ |
+| **Aesthetic** | Minimalist Cyberpunk / Neon |
+| **Developer** | Josh Galecki (Moonroof Studios) |
+| **Publisher** | Goblinz Publishing |
+| **Steam** | [store.steampowered.com/app/3211750](https://store.steampowered.com/app/3211750/Neongarten/) |
+| **Discord** | [discord.gg/HvtvGbSwax](https://discord.gg/HvtvGbSwax) |
 
-## 🎯 Project Goals
+## 🚀 Quick Start
 
-This project aims to extend Neongarten with community mods focused on:
+```bash
+# Enter development environment
+cd neongarten-mods
+nix develop
 
-### Gameplay Mods
-- **Larger maps** - Extended grid sizes for longer sessions
-- **New tiles/buildings** - More structure variety and synergies
-- **Faction-focused modes** - Heavy weighting toward specific building types
-- **Balance adjustments** - Community-driven tuning
-- **Endless mode** - Continue playing after reaching tower goals
+# Install gdsdecomp (one-time)
+./tools/setup-gdsdecomp.sh
 
-### Content Mods
-- **New game mechanics** - Fresh ways to score and progress
-- **Story elements** - Lore expansion and narrative content
-- **Challenge modes** - Themed setups with specific constraints
-- **Achievement expansion** - New goals to chase
-
-### Visual Mods
-- **Custom building models** - New 3D assets for buildings
-- **Texture packs** - Alternative visual themes
-- **UI enhancements** - Quality of life improvements
-- **Day/night cycle expansion** - More neon!
-
-## 📊 Game Analysis
-
-### What Makes Neongarten Good
-
-1. **Elegant Simplicity** - Easy to understand, hard to master
-2. **Satisfying Synergies** - Building combos feel organic (parks → rent, industry → industry)
-3. **Perfect Session Length** - 10-15 minutes per run
-4. **Aesthetic Cohesion** - Cyberpunk neon visuals are consistent and charming
-5. **Roguelite Progression** - Unlocks keep you coming back
-
-### Community Feedback (from Steam)
-
-**Wants:**
-- Endless/ongoing mode after completing tower
-- Zoom out further (especially on wide monitors)
-- Focus/challenge modes (industry, corporate, illegal emphasis)
-- More substantial day/night cycle mechanics
-- Better controller support
-- Keyboard pan controls
-
-**Pain Points:**
-- Progression limited after unlocks
-- Randomness can feel punishing
-- Some achievements very difficult (Penthouse, Plaza)
-- AMD graphics card texture issues
-
-## 🔧 Technical Research
-
-> ⚠️ **Research in Progress** - We're investigating the game's technical stack
-
-### Game Engine
-- **TBD** - Likely Unity or Godot based on the aesthetics and platform support
-- Runs on Windows via Proton on Linux
-- Steam Deck Playable
-
-### File Formats
-- **Models**: TBD
-- **Textures**: TBD
-- **Data Files**: TBD
-
-### Modding Approach
-- **TBD** - Reverse engineering needed to determine best approach
-- May involve:
-  - Asset replacement
-  - Data file editing
-  - Code injection
-  - BepInEx/MelonLoader (if Unity)
+# See QUICKSTART.md for full workflow
+```
 
 ## 📁 Project Structure
 
 ```
 neongarten-mods/
+├── QUICKSTART.md           # Quick reference guide
 ├── README.md               # This file
+├── flake.nix               # Nix development environment
 ├── docs/
-│   ├── GAME_ANALYSIS.md    # Deep dive into game mechanics
-│   ├── TECHNICAL_RESEARCH.md # Engine/format research
-│   └── ART_GUIDELINES.md   # Guidelines for Evie's art assets
-├── mods/
-│   ├── gameplay/           # Gameplay modification mods
-│   ├── content/            # New content mods
-│   └── visual/             # Visual/aesthetic mods
+│   ├── GAME_ANALYSIS.md    # Game mechanics deep dive
+│   ├── TECHNICAL_RESEARCH.md # Engine & formats (Godot 4.3.0)
+│   └── ART_GUIDELINES.md   # Asset creation guide for Evie
 ├── tools/
+│   ├── setup-gdsdecomp.sh  # gdsdecomp installer
 │   ├── extractor/          # Asset extraction tools
 │   └── packer/             # Asset packing tools
+├── mods/
+│   ├── gameplay/           # Balance & gameplay mods
+│   ├── content/            # New content mods
+│   └── visual/             # Visual & aesthetic mods
 ├── assets/
 │   ├── models/             # 3D models (Evie's work)
 │   ├── textures/           # Texture files
-│   └── reference/          # Reference images from game
-└── .cursor/
-    └── rules/              # AI agent configuration
+│   └── reference/          # Reference images
+└── extracted/              # Extracted game files (gitignored)
 ```
+
+## 🛠️ Technical Stack
+
+| Tool | Purpose | Source |
+|------|---------|--------|
+| **Godot 4** | Game engine / Editor | nixpkgs |
+| **godotpcktool** | PCK extraction/creation | nixpkgs |
+| **gdsdecomp** | GDScript decompilation | [GitHub](https://github.com/GDRETools/gdsdecomp) |
+| **gdtoolkit** | GDScript linting/formatting | nixpkgs |
+| **Blender** | 3D model editing (GLB) | nixpkgs |
+
+## 📊 Game Data
+
+### Buildings (80+)
+
+| Category | Examples |
+|----------|----------|
+| Residential | apartment, penthouse, shanty |
+| Commercial | bar, cafe, nightclub |
+| Industrial | factory, refinery, gruel_plant |
+| Corporate | corp_hq, incubator, lobbyist |
+| Tech | network_junction, data_tap, hacker_shack |
+| Parks | quick_park, large_park, laser_park |
+| Illegal | black_market, underground_rave |
+| Civic | plaza, civic_monument |
+
+### Perks (43)
+
+Categories include income multipliers, synergy enhancers, type focus, and special mechanics.
+
+### Game Modes
+
+| Mode | Grid Size | Description |
+|------|-----------|-------------|
+| Stack | 4 x 4 x 8 | The original |
+| Cube | 5 x 5 x 5 | The layer cake |
+| Needle | 3 x 3 x 14 | The stiletto |
+
+## 🎯 Modding Goals
+
+### Phase 1: Research ✅
+- [x] Identify game engine (Godot 4.3.0)
+- [x] Extract and document file structure
+- [x] Document building/perk schemas
+- [x] Set up development environment
+
+### Phase 2: Simple Mods
+- [ ] Balance tweaks (building values)
+- [ ] Texture replacements
+- [ ] Sound replacements
+- [ ] Perk adjustments
+
+### Phase 3: Content Mods
+- [ ] New building types
+- [ ] New perks
+- [ ] New game modes
+
+### Phase 4: Advanced
+- [ ] Mod loader system
+- [ ] stl-next integration
+- [ ] Community mod repository
 
 ## 👥 Team
 
 - **e421** - Programming, modding infrastructure, game design
-- **Evie** - 3D modeling, textures, visual design (Wacom tablet artist)
+- **Evie** - 3D modeling, textures, visual design (Wacom tablet)
 
-## 🚀 Getting Started
+## 🔧 Development
 
 ### Prerequisites
 
+- NixOS or Nix package manager
+- Git
+- ~500MB disk space for extracted files
+
+### Environment
+
 ```bash
-# Nix development environment (recommended)
+# Uses Nix flake for reproducible environment
 nix develop
 
-# Or manual setup
-# TBD based on technical research
+# Available tools:
+# - godot (Godot 4 editor)
+# - godotpcktool (PCK tools)
+# - gdformat/gdlint (GDScript tools)
+# - blender (3D modeling)
+# - steam-run (game launching)
 ```
 
-### Installation
+### Workflow
 
-```bash
-git clone https://github.com/Distracted-E421/neongarten-mods.git
-cd neongarten-mods
-```
+1. **Extract**: Use godotpcktool to extract PCK
+2. **Analyze**: Study structure and find modding targets
+3. **Modify**: Edit resources/scripts
+4. **Test**: Run modified PCK via Steam
+5. **Package**: Create distributable mod
 
 ## 📝 License
 
-TBD - Likely MIT or Apache 2.0 for the tooling, with assets following game's modding terms.
+TBD - Likely MIT or Apache 2.0 for tooling.
 
-## 🙏 Acknowledgments
-
-- **Moonroof Studios** - For creating Neongarten
-- **Goblinz Publishing** - For publishing and supporting the game
-- The Neongarten Discord community for feedback and ideas
+**Note**: This is an unofficial fan project. We are not affiliated with Moonroof Studios or Goblinz Publishing. Game assets remain property of their respective owners.
 
 ---
 
-*This is an unofficial fan project. We are not affiliated with Moonroof Studios or Goblinz Publishing.*
-
+*Last Updated: January 22, 2026*

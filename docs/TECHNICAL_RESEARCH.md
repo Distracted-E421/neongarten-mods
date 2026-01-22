@@ -1,323 +1,413 @@
 # Neongarten - Technical Research
 
-## Status: 🔬 Active Investigation
+## Status: ✅ Engine Confirmed - Godot 4.3.0
 
 This document tracks our technical research into Neongarten's implementation.
 
 ---
 
-## Game Engine Investigation
+## Game Engine: CONFIRMED
 
-### Hypothesis: Unity
+### ✅ **Godot 4.3.0**
 
-**Evidence For:**
-- Minimalist 3D graphics style common in Unity indie games
-- Windows-only native with Proton support (common Unity pattern)
-- DirectX 11 / OpenGL 3.3 requirements (Unity typical)
-- Goblinz Publishing has published Unity games before
+**Definitive Evidence:**
+- PCK header confirms: `Pck version: 2, Godot: 4.3.0`
+- `.pck` files are Godot Pack format
+- `.gdc` files are Godot compiled GDScript
+- `.gdshader` files in readable text format
+- `.translation` files are Godot localization format
+- Credits mention: "This is my first game in Godot"
 
-**Evidence Against:**
-- No definitive proof yet
-- Could also be Godot or custom engine
+### Developer Information
 
-### How to Confirm
-
-```bash
-# Method 1: Check for Unity files in game directory
-ls -la ~/.steam/steam/steamapps/common/Neongarten/
-# Look for: UnityPlayer.dll, unity_default_resources, globalgamemanagers
-
-# Method 2: Check executable metadata
-file ~/.steam/steam/steamapps/common/Neongarten/*.exe
-
-# Method 3: Process analysis while running
-lsof -p $(pgrep -f Neongarten) | grep -E "mono|unity"
-```
-
-### Research Tasks
-
-- [ ] Install game and examine file structure
-- [ ] Check Steam depot files for engine hints
-- [ ] Look for log files that reveal engine
-- [ ] Check community discussions for dev statements
+From translations/credits:
+- **Developer**: Josh Galecki (Moonroof Studios)
+- **Publisher**: Goblinz Publishing
+- **Framework**: Started with Kenney's City Builder Starter Kit
+- **Tools**: Asset Forge 3D modeling program
+- **Collective**: Tiny Mass Games
 
 ---
 
-## File Structure Analysis
+## File Structure
 
-### Expected Locations (Steam + Proton)
+### Game Installation
 
 ```
-# Game installation
-~/.steam/steam/steamapps/common/Neongarten/
-
-# Proton prefix (save data, configs)
-~/.steam/steam/steamapps/compatdata/3211750/pfx/
-
-# Steam cloud saves
-~/.steam/steam/userdata/<user_id>/3211750/
+~/.local/share/Steam/steamapps/common/Neongarten/
+├── Neongarten.exe              # Main game (61MB, PE32+ x86-64)
+├── Neongarten.pck              # Main game data (358MB)
+├── NeongartenPrologue.exe      # Prologue demo (71MB)
+├── NeongartenPrologue.pck      # Prologue data (228MB)
+├── steam_api64.dll             # Steam integration
+├── Licenses.txt                # Font licenses
+└── translations/               # Localization
+    ├── Neongarten_translations.csv     # Master translation file
+    ├── Neongarten_translations.en.translation
+    ├── Neongarten_translations.de.translation
+    ├── Neongarten_translations.fr.translation
+    ├── Neongarten_translations.ja.translation
+    ├── Neongarten_translations.ko.translation
+    ├── Neongarten_translations.pl.translation
+    ├── Neongarten_translations.zh_CN.translation
+    └── Neongarten_translations.zh_TW.translation
 ```
 
-### File Types to Investigate
+### Extracted PCK Structure (351MB, 2,966 files)
 
-| Extension | Possible Content | Priority |
-|-----------|------------------|----------|
-| `.assets` | Unity asset bundles | High |
-| `.json` | Config/data files | High |
-| `.xml` | Config files | Medium |
-| `.dat` | Binary data | Medium |
-| `.dll` | C# assemblies (if Unity) | High |
-| `.resources` | Unity resources | Medium |
-
----
-
-## Modding Approaches by Engine
-
-### If Unity
-
-#### BepInEx (Recommended)
-```bash
-# BepInEx is the standard Unity modding framework
-# Provides:
-# - Plugin loading
-# - Harmony patching
-# - Config system
-# - Logging
-
-# Installation:
-# 1. Download BepInEx for Unity
-# 2. Extract to game folder
-# 3. Run game once to generate configs
-# 4. Place plugins in BepInEx/plugins/
 ```
-
-#### Asset Bundle Mods
-```csharp
-// Replace textures/models
-AssetBundle bundle = AssetBundle.LoadFromFile("mods/custom.bundle");
-GameObject prefab = bundle.LoadAsset<GameObject>("NewBuilding");
-```
-
-#### Harmony Patching
-```csharp
-// Modify game behavior
-[HarmonyPatch(typeof(Building), "CalculateIncome")]
-class IncomePatch {
-    static void Postfix(ref int __result) {
-        __result *= 2; // Double all income
-    }
-}
-```
-
-### If Godot
-
-#### GDScript Mods
-```gdscript
-# Godot allows runtime loading of scenes/scripts
-var mod = load("res://mods/my_mod.gd")
-mod.apply()
-```
-
-#### PCK File Replacement
-```bash
-# Export custom .pck files
-# Replace or supplement game data
-```
-
-### If Custom Engine
-
-- Reverse engineering required
-- Binary patching likely needed
-- Asset formats must be decoded
-- Significantly more work
-
----
-
-## Asset Formats
-
-### 3D Models (Unknown)
-
-**Possible Formats:**
-- `.fbx` - Standard Unity import
-- `.gltf/.glb` - Modern open format
-- `.obj` - Simple meshes
-- Proprietary bundle format
-
-**For Evie's Workflow:**
-- Blender → FBX export likely safest
-- May need to match existing rig/scale
-- UV mapping must match texture format
-
-### Textures (Unknown)
-
-**Possible Formats:**
-- PNG/TGA - Standard (likely)
-- DDS - DirectX compressed
-- Unity's proprietary format
-
-**Considerations:**
-- Power-of-two dimensions?
-- Mipmaps required?
-- Normal maps for lighting?
-
-### Audio (Unknown)
-
-**Possible Formats:**
-- `.ogg` - Common for games
-- `.wav` - Uncompressed
-- `.mp3` - Less common in games
-
----
-
-## Data Files Research
-
-### Building Definitions
-
-**Expected Structure (Speculation):**
-```json
-{
-  "buildings": [
-    {
-      "id": "basic_apartment",
-      "name": "Basic Apartment",
-      "category": "residential",
-      "base_income": 10,
-      "synergies": [
-        {"with": "park", "bonus": 5},
-        {"with": "penthouse", "bonus": -2}
-      ],
-      "model": "models/apartment_basic.fbx",
-      "texture": "textures/apartment_basic.png",
-      "unlock_day": 1
-    }
-  ]
-}
-```
-
-### Perk Definitions
-
-**Expected Structure (Speculation):**
-```json
-{
-  "perks": [
-    {
-      "id": "income_boost_residential",
-      "name": "Real Estate Mogul",
-      "description": "Residential buildings earn 20% more",
-      "effect": {
-        "type": "income_multiplier",
-        "target": "residential",
-        "value": 1.2
-      },
-      "unlock_condition": "reach_day_30"
-    }
-  ]
-}
+extracted/main/
+├── .godot/
+│   ├── exported/133200997/     # Compiled resources (.res, .scn)
+│   └── imported/               # Imported assets
+├── fonts/                      # Font files
+├── models/                     # 3D models (GLB format)
+│   ├── *.glb.import           # Import configs
+│   ├── coins/                 # Coin meshes
+│   └── Textures/              # Model textures
+├── models 2/                   # Additional models
+│   ├── Coins and Cars/
+│   ├── extracted meshes/
+│   └── Grounds/
+├── music/                      # Audio files
+├── particles/                  # Particle effects
+├── perks/                      # Perk definitions (43 perks)
+│   └── *.tres.remap           # Perk resource refs
+├── player/                     # Player data
+├── scenes/
+│   ├── lit_model_scenes/      # Building scenes with lights
+│   ├── UI/                    # UI scenes
+│   ├── *.gdshader             # Shader files (readable!)
+│   └── *.tscn.remap           # Scene refs
+├── scripts/                    # GDScript (compiled .gdc)
+│   ├── CityScreen.gdc         # Main game logic (50KB!)
+│   ├── data_map.gdc           # Game data (35KB)
+│   ├── structure.gdc          # Building logic
+│   ├── perk.gdc               # Perk logic
+│   └── *.gd.remap             # Script refs
+├── shaders/                    # Additional shaders
+├── sounds/                     # Sound effects
+├── sprites/                    # 2D sprites/textures
+├── structures/                 # Building definitions (80+ buildings)
+│   └── *.tres.remap           # Building resource refs
+├── symbols/                    # Symbol resources
+├── Themes/                     # UI themes
+├── translations/               # Localization
+├── UI art/                     # UI graphics
+│   └── final perk icons/      # Perk icon PNGs
+├── project.binary             # Compiled project settings
+├── splash-screen.png          # Startup screen
+└── Symbol.gdc                 # Symbol class
 ```
 
 ---
 
-## Reverse Engineering Tools
+## Data Formats
 
-### General
+### Building Resource (Structure)
 
-```bash
-# File identification
-file <unknown_file>
-xxd <binary_file> | head -50
+**File Type**: Binary Godot Resource (.res)  
+**Format**: RSRC header, binary serialized
 
-# String extraction
-strings <binary_file> | grep -i "unity\|godot\|building"
+**Properties** (extracted via strings):
+```
+resource_local_to_scene     # bool
+resource_name               # String
+script                      # res://scripts/structure.gd
+scene                       # PackedScene (lit model)
+image                       # Texture2D (UI icon)
+
+# Model variants for adjacency
+has_covered_model           # bool - when covered from above
+show_covered_when_covered   # bool
+has_up_model                # bool - top extension
+show_up_when_covered        # bool
+has_north_model             # bool
+show_north_when_north_neighbor  # bool
+has_east_model              # bool
+show_east_when_east_neighbor    # bool
+has_south_model             # bool
+show_south_when_south_neighbor  # bool
+has_west_model              # bool
+show_west_when_west_neighbor    # bool
+
+# Gameplay properties
+income                      # int - base income
+multiplier                  # float - income multiplier
+power                       # int - power generation/consumption
+amplify                     # float - amplification factor
+type                        # int/enum - building type
+family                      # int/enum - building family
+x_size                      # int - footprint X
+z_size                      # int - footprint Z
+y_size                      # int - height
+rarity                      # int - spawn rarity
+description                 # String - internal desc
+priority                    # int - spawn priority
+lights_level                # int - neon light intensity
+legality                    # int/enum - legal/illegal
+name_key                    # String - translation key
+description_key             # String - translation key
+flavor_key                  # String - translation key
+unlock_set_index            # int - unlock progression
+has_bonus_counter           # bool - shows counter UI
 ```
 
-### Unity Specific
-
-```bash
-# AssetStudio - Unity asset viewer
-# https://github.com/Perfare/AssetStudio
-
-# UABE - Unity Asset Bundle Extractor
-# https://github.com/SeriousCache/UABE
-
-# dnSpy - C# decompiler (for DLLs)
-# https://github.com/dnSpy/dnSpy
+**Example (Factory)**:
+```
+Script: res://scripts/structure.gd
+Scene: res://scenes/lit_model_scenes/factory.tscn
+Image: res://sprites/T_UI_Building_Industrial_Factory.png
+Description: "An INDUSTRIAL center of production.
+              Gains +1 INCOME for each INDUSTRIAL building
+              in the same vertical stack."
 ```
 
-### Godot Specific
+### Perk Resource
+
+**File Type**: Binary Godot Resource (.res)  
+**Format**: RSRC header, binary serialized
+
+**Properties**:
+```
+script          # res://scripts/perk.gd
+type            # int/enum
+name            # String
+description     # String
+rarity          # int
+icon            # Texture2D
+name_key        # String - translation key
+description_key # String - translation key
+```
+
+**Example (Cheap Booze)**:
+```
+Name: "Cheap Booze"
+Description: "Bars also gain +INCOME for neighboring Shanty Apartments."
+Icon: res://UI art/final perk icons/c_perk_cheap_booze.png
+```
+
+### 3D Models
+
+**Format**: GLB (Binary glTF)  
+**Tool**: Blender, Asset Forge
+
+Models are standard GLB format, easily importable into Blender:
+- Located in `models/` and `models 2/`
+- Naming convention: `<building_name>.glb`
+- Some have variants: `*_base.glb`, `*_topped.glb`, `*_animated_*.glb`
+
+### Shaders
+
+**Format**: Text-based Godot shader (.gdshader)  
+**Readable**: ✅ Yes!
+
+Located in `scenes/*.gdshader`:
+- `restyle_sky.gdshader` - Procedural sky with clouds
+- `stylized_sky.gdshader` - Alternative sky shader
+
+---
+
+## Tool Chain
+
+### Required Tools
+
+| Tool | Purpose | Status |
+|------|---------|--------|
+| **godotpcktool** | PCK extraction/creation | ✅ In nixpkgs |
+| **gdsdecomp** | GDScript decompilation, full project recovery | ⚠️ Download from GitHub |
+| **gdtoolkit** | GDScript linting/formatting | ✅ In nixpkgs |
+| **Godot 4.3** | Editor for mod creation | ✅ In nixpkgs |
+| **Blender** | 3D model editing | ✅ In nixpkgs |
+
+### Installation
 
 ```bash
-# Godot RE Tools
-# https://github.com/bruvzg/gdsdecomp
+# Enter dev environment
+cd /home/e421/neongarten-mods
+nix develop
 
-# Extract .pck files
-godot --export-pack
+# Download gdsdecomp (for full decompilation)
+# https://github.com/GDRETools/gdsdecomp/releases
+# Get: gdre_tools-*-linux.zip
+```
+
+### Common Operations
+
+```bash
+# List PCK contents
+godotpcktool -p ~/.local/share/Steam/steamapps/common/Neongarten/Neongarten.pck -a list
+
+# Extract PCK
+godotpcktool -p <pck> -a extract -o ./extracted/main
+
+# Full project recovery (requires gdsdecomp)
+./gdre_tools --headless --recover=<pck>
+
+# Extract strings from binary resource
+strings ./extracted/main/.godot/exported/*/export-*-factory.res
+
+# Hex dump resource
+xxd ./extracted/main/.godot/exported/*/export-*-factory.res | head -100
 ```
 
 ---
 
-## Testing Environment
+## Modding Approaches
 
-### Proton Setup for Modding
+### 1. Asset Replacement (Easiest)
+
+Replace textures, models, or sounds in a new PCK:
 
 ```bash
-# Find game's Proton prefix
-PROTON_PREFIX="$HOME/.steam/steam/steamapps/compatdata/3211750/pfx"
+# 1. Extract
+godotpcktool -p original.pck -a extract -o ./modded
 
-# Run commands in Proton environment
-WINEPREFIX="$PROTON_PREFIX" wine explorer /desktop=shell
+# 2. Replace assets
+cp my_texture.png ./modded/sprites/
 
-# Check logs
-cat "$PROTON_PREFIX/drive_c/users/steamuser/AppData/LocalLow/*/Player.log"
+# 3. Repack
+godotpcktool -p modded.pck -a add -f ./modded --set-godot-version 4.3.0
+
+# 4. Replace original (backup first!)
+cp modded.pck ~/.local/share/Steam/steamapps/common/Neongarten/Neongarten.pck
 ```
 
-### Development Workflow
+### 2. Data Modification (Medium)
 
-```
-1. Backup original game files
-2. Make modification
-3. Test via Steam launch
-4. Check logs for errors
-5. Iterate
-```
+Modify building/perk values:
+
+1. Use gdsdecomp to recover project
+2. Edit `.tres` resource files
+3. Recompile with Godot 4.3
+4. Repack PCK
+
+### 3. Script Modification (Advanced)
+
+Modify game logic:
+
+1. Decompile GDScript with gdsdecomp
+2. Edit `.gd` source files
+3. Recompile with Godot 4.3
+4. Repack PCK
+
+### 4. Mod Loader (Future)
+
+Create a mod loading system:
+
+1. Develop Godot addon that loads external resources
+2. Create mod format specification
+3. Integrate with stl-next for management
 
 ---
 
-## Known Issues & Bugs
+## Key Scripts (for decompilation)
 
-From Steam Community:
+| Script | Size | Purpose |
+|--------|------|---------|
+| `CityScreen.gdc` | 50KB | Main game screen, core gameplay |
+| `data_map.gdc` | 35KB | Game data definitions |
+| `placed_structure.gdc` | 17KB | Placed building behavior |
+| `GridTileDisplay.gdc` | 16KB | Grid rendering |
+| `PerkOverlayScreen.gdc` | 12KB | Perk selection UI |
+| `NewGameScreen.gdc` | 12KB | New game setup |
+| `structure.gdc` | 5.7KB | Building base class |
+| `perk.gdc` | 1.2KB | Perk base class |
 
-### AMD Graphics Issues
-- Texture flashing on AMD GPUs
-- Dev released special build (Sep 2025)
-- Suggests OpenGL/DirectX rendering path
+---
 
-### Controller Support
-- Native controller incomplete
-- Steam Input workaround exists
-- Suggests input system could be modded
+## Building Categories
+
+From extracted data:
+
+### Residential
+- lame_apartment, fancy_apartment, penthouse_apartment
+- shanty_apartment, home_from_work_box
+
+### Commercial  
+- bar, lame_cafe, nightclub, coffee_shop
+- spiced_gruel_store, tourist_office, oxygenhaus
+
+### Industrial
+- factory, gruel_plant, refinery, plastic_mine
+- battery_complex, machine_shop, printing_press
+
+### Corporate
+- corp_office, corp_hq, corp_incubator
+- executive_retreat, lobbyist_offices
+
+### Government/Civic
+- housing_authority, civic_monument, plaza
+- security_forces, memory_hole
+
+### Tech
+- network_junction, neural_net_weaver, data_tap
+- hacker_shack, gene_splicer, spider_fab
+
+### Parks
+- quick_park, large_park, laser_park, outlet_park
+
+### Illegal
+- black_market, underground_rave, unlicensed_drug_manufactory
+- hacktivist_network, mutant_refuge
+
+### Religious/Weird
+- secular_church, citadel_of_ohm, the_monad_of_i
+- the_high_underseeker, conducting_choir
+
+---
+
+## Perk Categories
+
+From extracted data (43 perks):
+
+- **Income**: basic_builder, rare_boost, overcharged
+- **Synergy**: cheap_booze, corner_networks, simple_stacking
+- **Type Focus**: lord_of_the_sludge, corporate_center, neon_baptism
+- **Special**: double_agents, secret_agents, prohibition
+- **Illegal**: bribes, smugglers_run, nethacks
 
 ---
 
 ## Next Steps
 
 ### Immediate
-1. [ ] Install game on Obsidian
-2. [ ] Examine file structure
-3. [ ] Identify engine definitively
-4. [ ] Extract and analyze asset formats
+- [x] Confirm game engine (Godot 4.3.0)
+- [x] Extract PCK contents
+- [x] Document file structure
+- [x] Identify building/perk schemas
+- [ ] Download and test gdsdecomp
+- [ ] Perform full project recovery
+- [ ] Document all building values
+- [ ] Document all perk effects
 
 ### Short-term
-1. [ ] Set up modding framework (BepInEx if Unity)
-2. [ ] Create "Hello World" mod
-3. [ ] Document data file formats
-4. [ ] Create asset pipeline for Evie
+- [ ] Create building value spreadsheet
+- [ ] Create perk effect documentation
+- [ ] Set up asset replacement workflow
+- [ ] Create first balance mod (test)
 
 ### Long-term
-1. [ ] Build mod loader/manager
-2. [ ] Create content creation tools
-3. [ ] Establish mod distribution method
+- [ ] Develop mod loader addon
+- [ ] Integrate with stl-next
+- [ ] Create community mod repository
+- [ ] Potential native Linux port investigation
 
 ---
 
-*Last Updated: January 2026*
+## Linux Port Potential
 
+Since Neongarten is Godot 4.3.0, a native Linux port is theoretically straightforward:
+
+1. **Export Templates**: Godot can export to Linux natively
+2. **No Native Code**: Appears to be pure GDScript (no GDExtension)
+3. **Standard Dependencies**: No unusual platform requirements
+4. **Current Status**: Windows-only, runs via Proton (Deck Verified)
+
+**Approach**: If we establish good rapport with Moonroof Studios, we could potentially assist with Linux export testing.
+
+---
+
+*Last Updated: January 22, 2026*  
+*Godot Version: 4.3.0*  
+*PCK Format Version: 2*

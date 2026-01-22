@@ -1,47 +1,42 @@
-# Build outputs
+# Extracted game files (don't commit copyrighted content)
+extracted/
+*.pck
+
+# Godot editor files
+.godot/
+*.import
+
+# Build artifacts
+*.gdc
 result
-result-*
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-*.egg-info/
-
-# IDE
-.idea/
-*.swp
-*.swo
-*~
-.vscode/
-
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Game files (don't commit game assets)
-*.exe
-*.dll
-*.assets
-*.resource
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Large binary files
-*.psd
-*.xcf
-*.blend1
-*.blend2
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
 
-# Temporary
+# Temporary files
 *.tmp
 *.bak
 *.log
 
-# Secrets
-.env
-*.secret
+# Downloaded tools
+tools/gdsdecomp/
+*.AppImage
+*.zip
+*.tar.gz
 
-# Nix
-.direnv/
-
+# Mod build outputs
+build/
+dist/
