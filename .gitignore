@@ -1,5 +1,6 @@
-# Extracted game files (don't commit copyrighted content)
+# Extracted/recovered game files (don't commit copyrighted content)
 extracted/
+recovered/
 *.pck
 
 # Godot editor files
