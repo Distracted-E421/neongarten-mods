@@ -1,6 +1,12 @@
 # Neongarten - Technical Research
 
-## Status: ✅ Engine Confirmed - Godot 4.3.0
+## Status: ✅ FULLY DECOMPILED - Godot 4.3.0
+
+**Decompilation Status**: Complete (January 2026)
+- **51 GDScript files** decompiled (0 failures!)
+- **1469 resources** converted to readable `.tres`
+- **322 scenes** exported as `.tscn`
+- **67/821 translation keys** unrecovered (minor)
 
 This document tracks our technical research into Neongarten's implementation.
 
