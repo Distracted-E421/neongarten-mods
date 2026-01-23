@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Portal Send - Send commands to running portal-input daemon
+# 
+# Usage:
+#   portal-send move 768 1200
+#   portal-send click 768 1000
+#   portal-send rclick 500 900
+#   portal-send regions
+#   portal-send quit
+#
+# This sends commands to the daemon's stdin via a named pipe.
+# First, start the daemon: portal-input daemon
+#
+# If no daemon is running, this will start one (requires consent dialog).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORTAL_INPUT="${SCRIPT_DIR}/../portal-input/target/release/portal-input"
+DAEMON_PIPE="/tmp/portal-input-pipe"
+DAEMON_PID_FILE="/tmp/portal-input.pid"
+
+start_daemon() {
+    echo "Starting portal-input daemon..."
+    echo "⚠️  Please approve the consent dialog when it appears!"
+    
+    # Create named pipe if it doesn't exist
+    [ -p "$DAEMON_PIPE" ] || mkfifo "$DAEMON_PIPE"
+    
+    # Start daemon reading from the pipe
+    tail -f "$DAEMON_PIPE" | "$PORTAL_INPUT" daemon &
+    DAEMON_PID=$!
+    echo $DAEMON_PID > "$DAEMON_PID_FILE"
+    
+    # Wait for daemon to be ready
+    sleep 3
+    
+    if kill -0 $DAEMON_PID 2>/dev/null; then
+        echo "✓ Daemon started (PID: $DAEMON_PID)"
+        return 0
+    else
+        echo "✗ Daemon failed to start"
+        return 1
+    fi
+}
+
+is_daemon_running() {
+    if [ -f "$DAEMON_PID_FILE" ]; then
+        PID=$(cat "$DAEMON_PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+send_command() {
+    if ! is_daemon_running; then
+        echo "Daemon not running. Start it first with: $PORTAL_INPUT daemon"
+        echo "Then send commands with: echo 'move 768 1200' > $DAEMON_PIPE"
+        return 1
+    fi
+    
+    echo "$*" > "$DAEMON_PIPE"
+}
+
+case "${1:-}" in
+    start)
+        if is_daemon_running; then
+            echo "Daemon already running (PID: $(cat $DAEMON_PID_FILE))"
+        else
+            start_daemon
+        fi
+        ;;
+    stop)
+        if is_daemon_running; then
+            echo "quit" > "$DAEMON_PIPE"
+            kill "$(cat $DAEMON_PID_FILE)" 2>/dev/null
+            rm -f "$DAEMON_PID_FILE" "$DAEMON_PIPE"
+            echo "Daemon stopped"
+        else
+            echo "Daemon not running"
+        fi
+        ;;
+    status)
+        if is_daemon_running; then
+            echo "Daemon running (PID: $(cat $DAEMON_PID_FILE))"
+        else
+            echo "Daemon not running"
+        fi
+        ;;
+    move|click|rclick|regions|quit)
+        send_command "$@"
+        ;;
+    "")
+        echo "Usage: portal-send <command> [args...]"
+        echo ""
+        echo "Commands:"
+        echo "  start             Start the daemon (requires consent dialog)"
+        echo "  stop              Stop the daemon"
+        echo "  status            Check if daemon is running"
+        echo "  move X Y          Move cursor to position"
+        echo "  click X Y         Move and left-click"
+        echo "  rclick X Y        Move and right-click"
+        echo "  regions           List EIS regions"
+        echo "  quit              Stop the daemon"
+        echo ""
+        echo "Example:"
+        echo "  portal-send start"
+        echo "  portal-send move 768 1200"
+        echo "  portal-send click 768 1000"
+        echo "  portal-send stop"
+        ;;
+    *)
+        echo "Unknown command: $1"
+        exit 1
+        ;;
+esac
+

@@ -45,6 +45,8 @@ enum Commands {
         #[arg(short, long)]
         shake: bool,
     },
+    /// Start daemon mode - creates session once, accepts commands via stdin
+    Daemon,
     /// Quick shake test using legacy methods
     Shake,
     /// Check portal availability
@@ -61,6 +63,7 @@ async fn main() -> ashpd::Result<()> {
         Commands::Interactive => run_interactive().await?,
         Commands::Eis => run_eis_test().await?,
         Commands::EisSend { x, y, click, shake } => run_eis_send(x, y, click, shake).await?,
+        Commands::Daemon => run_daemon().await?,
         Commands::Shake => run_shake_test().await?,
         Commands::Status => {
             let rd = RemoteDesktop::new().await?;
@@ -532,6 +535,221 @@ async fn run_eis_send(x: f32, y: f32, click: bool, shake: bool) -> ashpd::Result
     tokio::time::sleep(Duration::from_secs(2)).await;
     
     println!("Done!");
+    Ok(())
+}
+
+async fn run_daemon() -> ashpd::Result<()> {
+    eprintln!("=== Portal Input Daemon ===");
+    eprintln!("One-time consent dialog will appear...\n");
+    
+    let (remote_desktop, session) = create_session().await?;
+    
+    // Connect to EIS
+    eprintln!("Connecting to EIS...");
+    let eis_fd = remote_desktop.connect_to_eis(&session).await?;
+    let socket: UnixStream = eis_fd.into();
+    socket.set_nonblocking(true).ok();
+    
+    let context = reis::ei::Context::new(socket).expect("Failed to create reis context");
+    
+    // Handshake
+    let mut handshaker = EiHandshaker::new("portal-input-daemon", reis::ei::handshake::ContextType::Sender);
+    let mut event_converter: Option<EiEventConverter> = None;
+    let timeout = Instant::now() + Duration::from_secs(5);
+    
+    'handshake: while Instant::now() < timeout {
+        context.read().ok();
+        while let Some(event_result) = context.pending_event() {
+            if let reis::PendingRequestResult::Request(event) = event_result {
+                if let Ok(Some(resp)) = handshaker.handle_event(event) {
+                    event_converter = Some(EiEventConverter::new(&context, resp));
+                    break 'handshake;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    
+    let converter = event_converter.as_mut().expect("Handshake failed");
+    eprintln!("✓ EIS handshake complete");
+    
+    // Wait for device
+    let mut abs_device: Option<reis::event::Device> = None;
+    let mut serial = 0u32;
+    let timeout = Instant::now() + Duration::from_secs(5);
+    
+    'setup: while Instant::now() < timeout {
+        context.read().ok();
+        while let Some(event_result) = context.pending_event() {
+            if let reis::PendingRequestResult::Request(event) = event_result {
+                if converter.handle_event(event).is_ok() {
+                    while let Some(ei_event) = converter.next_event() {
+                        match ei_event {
+                            EiEvent::SeatAdded(seat_added) => {
+                                seat_added.seat.bind_capabilities(&[
+                                    DeviceCapability::Pointer,
+                                    DeviceCapability::PointerAbsolute,
+                                    DeviceCapability::Button,
+                                    DeviceCapability::Keyboard,
+                                ]);
+                                converter.connection().flush().ok();
+                            }
+                            EiEvent::DeviceAdded(device_added) => {
+                                if device_added.device.has_capability(DeviceCapability::PointerAbsolute) {
+                                    abs_device = Some(device_added.device.clone());
+                                    eprintln!("✓ Got absolute device");
+                                    eprintln!("  Regions:");
+                                    for (i, region) in device_added.device.regions().iter().enumerate() {
+                                        eprintln!("    [{}] x:{}, y:{}, {}x{} @ {}", 
+                                            i, region.x, region.y, region.width, region.height, region.scale);
+                                    }
+                                }
+                            }
+                            EiEvent::DeviceResumed(resumed) => {
+                                serial = resumed.serial;
+                                if abs_device.is_some() {
+                                    break 'setup;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    
+    let device = abs_device.expect("No absolute device found");
+    let pointer_abs: reis::ei::PointerAbsolute = device.interface().expect("No PointerAbsolute");
+    let button_iface: Option<reis::ei::Button> = device.interface();
+    let ei_device = device.device();
+    
+    eprintln!("\n✓ Daemon ready! Listening on stdin...");
+    eprintln!("Commands: move X Y | click X Y | quit");
+    eprintln!("Example: move 768 1200");
+    eprintln!("Example: click 768 1000");
+    eprintln!();
+    
+    // Signal ready with JSON
+    println!("{{\"status\":\"ready\",\"serial\":{}}}",serial);
+    
+    let stdin = io::stdin();
+    let mut sequence = 1u32;
+    let mut emulating = false;
+    
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        
+        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        
+        // Start emulating if not already
+        if !emulating {
+            ei_device.start_emulating(serial, sequence);
+            context.flush().ok();
+            emulating = true;
+        }
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        
+        match parts[0] {
+            "move" if parts.len() >= 3 => {
+                let x: f32 = parts[1].parse().unwrap_or(0.0);
+                let y: f32 = parts[2].parse().unwrap_or(0.0);
+                pointer_abs.motion_absolute(x, y);
+                serial += 1;
+                ei_device.frame(serial, now);
+                context.flush().ok();
+                println!("{{\"status\":\"ok\",\"action\":\"move\",\"x\":{},\"y\":{}}}",x,y);
+            }
+            "click" if parts.len() >= 3 => {
+                let x: f32 = parts[1].parse().unwrap_or(0.0);
+                let y: f32 = parts[2].parse().unwrap_or(0.0);
+                
+                // Move
+                pointer_abs.motion_absolute(x, y);
+                serial += 1;
+                ei_device.frame(serial, now);
+                context.flush().ok();
+                
+                std::thread::sleep(Duration::from_millis(50));
+                
+                // Click
+                if let Some(ref btn) = button_iface {
+                    btn.button(272, reis::ei::button::ButtonState::Press);
+                    serial += 1;
+                    ei_device.frame(serial, now + 50_000);
+                    context.flush().ok();
+                    
+                    std::thread::sleep(Duration::from_millis(50));
+                    
+                    btn.button(272, reis::ei::button::ButtonState::Released);
+                    serial += 1;
+                    ei_device.frame(serial, now + 100_000);
+                    context.flush().ok();
+                }
+                println!("{{\"status\":\"ok\",\"action\":\"click\",\"x\":{},\"y\":{}}}",x,y);
+            }
+            "rclick" if parts.len() >= 3 => {
+                let x: f32 = parts[1].parse().unwrap_or(0.0);
+                let y: f32 = parts[2].parse().unwrap_or(0.0);
+                
+                pointer_abs.motion_absolute(x, y);
+                serial += 1;
+                ei_device.frame(serial, now);
+                context.flush().ok();
+                
+                std::thread::sleep(Duration::from_millis(50));
+                
+                if let Some(ref btn) = button_iface {
+                    btn.button(273, reis::ei::button::ButtonState::Press);
+                    serial += 1;
+                    ei_device.frame(serial, now + 50_000);
+                    context.flush().ok();
+                    
+                    std::thread::sleep(Duration::from_millis(50));
+                    
+                    btn.button(273, reis::ei::button::ButtonState::Released);
+                    serial += 1;
+                    ei_device.frame(serial, now + 100_000);
+                    context.flush().ok();
+                }
+                println!("{{\"status\":\"ok\",\"action\":\"rclick\",\"x\":{},\"y\":{}}}",x,y);
+            }
+            "regions" => {
+                print!("{{\"status\":\"ok\",\"action\":\"regions\",\"regions\":[");
+                for (i, region) in device.regions().iter().enumerate() {
+                    if i > 0 { print!(","); }
+                    print!("{{\"id\":{},\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"scale\":{}}}",
+                        i, region.x, region.y, region.width, region.height, region.scale);
+                }
+                println!("]}}");
+            }
+            "quit" | "exit" => {
+                if emulating {
+                    sequence += 1;
+                    ei_device.stop_emulating(serial);
+                    context.flush().ok();
+                }
+                println!("{{\"status\":\"ok\",\"action\":\"quit\"}}");
+                break;
+            }
+            _ => {
+                println!("{{\"status\":\"error\",\"message\":\"unknown command: {}\"}}",parts[0]);
+            }
+        }
+    }
+    
+    eprintln!("\nDaemon shutting down...");
     Ok(())
 }
 
