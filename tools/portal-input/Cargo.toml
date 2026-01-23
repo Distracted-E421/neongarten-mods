@@ -1,10 +1,11 @@
 [package]
 name = "portal-input"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
 ashpd = { version = "0.10", features = ["tokio"] }
+reis = "0.5"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

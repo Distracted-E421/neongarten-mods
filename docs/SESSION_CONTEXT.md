@@ -1,5 +1,17 @@
 # Neongarten Modding Session Context
-**Last Updated**: 2026-01-22 14:00 CST
+**Last Updated**: 2026-01-23 15:30 CST
+
+## 🎉 MAJOR BREAKTHROUGH: EIS Input Working!
+
+**We have successfully implemented unfocused input via Wayland portals!**
+
+The AI can now:
+1. ✅ Take screenshots of the Dell monitor (where Godot runs)
+2. ✅ Move the cursor to absolute coordinates via EIS
+3. ✅ Click at specific positions
+4. ✅ All without requiring window focus!
+
+This unlocks true AI interaction with the Godot editor.
 
 ## Current State
 
@@ -11,90 +23,94 @@
 
 ### Local Fixes Applied ✅
 1. **Steam API Stub**: `recovered/player/godot_steam.gd` replaced with stub
-   - Original referenced `Steam.*` which fails without GodotSteam plugin
-   - Stub provides local achievement/stat storage
 2. **Translations Disabled**: Line 422 in `project.godot` commented out
-   - Binary `.translation` files couldn't be decompiled
 
 ### Tools Built ✅
+
+#### Portal Input Tool (`tools/portal-input/`)
+**The breakthrough tool for Wayland unfocused input!**
+
+| Command | Purpose |
+|---------|---------|
+| `eis` | Show EIS regions and coordinate mapping |
+| `eis-send -x X -y Y` | Move cursor to absolute position |
+| `eis-send -x X -y Y --click` | Move and left-click |
+| `eis-send -x X -y Y --shake` | Move with visual shake |
+| `status` | Check portal availability |
+| `interactive` | Interactive legacy mode |
+
+**Build**: `cd tools/portal-input && cargo build --release`
 
 #### Godot Harness (`tools/godot-harness/`)
 | Tool | Purpose |
 |------|---------|
-| `gdharness` | Main CLI: project info, asset listing, validation |
+| `gdharness` | Main CLI: project info, asset listing |
 | `asset-catalog` | Identify prologue vs modern assets |
-| `samsung-capture` | Non-focus screenshot of Samsung TV |
-| `gshot` | Quick screenshot tool |
-| `gdre-nixos` | NixOS wrapper for gdsdecomp |
+| `ai-monitor-capture` | Non-focus screenshot of Dell monitor |
 
-#### Samsung TV Capture
-- **Coordinates**: `1920x1350` at `x=0, y=3280`
-- **Why 1350 height**: Samsung TV at 125% scale needs extra pixels
-- **Config**: `tools/godot-harness/samsung-config.json`
-- **Usage**: `./samsung-capture capture [output.png]`
+### Display Setup - AI Monitor
 
-### Assets Analysis
+**Dell E2420H** (Top-left position, Priority 2)
+- **Resolution**: 1920x1080 at 125% scale
+- **Screenshot Region**: `(0, 1570)` for `3070x1750` capture area
+- **EIS Region [1]**: x: 0-1536, y: 796-1660, scale 1.25
 
-#### Counts
-- 322 3D models (.glb)
-- 749 textures (.png)
-- 77 structures (.tres)
-- 123 scenes (.tscn)
-- 51 scripts (.gd)
+### EIS Region Mapping
 
-#### Prologue Assets Identified
-**Pattern**: `lame_*` prefix
+| Region | X | Y | Width | Height | Scale | Description |
+|----|----|----|----|----|----|-----|
+| [0] | 1536 | 700 | 1707 | 960 | 1.5 | Main monitor (center) |
+| [1] | 0 | 796 | 1536 | 864 | 1.25 | **Dell E2420H - AI Monitor** |
+| [2] | 4323 | 796 | 1080 | 1920 | 1.0 | Right portrait |
+| [3] | 0 | 1660 | 1536 | 864 | 1.25 | Samsung TV |
+| [4] | 1536 | 1660 | 1536 | 864 | 1.25 | Bottom-center |
+| [5] | 3243 | 0 | 1080 | 1920 | 1.0 | Top-right portrait |
 
-| Asset | Type |
-|-------|------|
-| lame_apartment | Building (structure, model, sprite) |
-| lame_cafe | Building (structure, model, sprite) |
-| lame_train_station | Building (structure, model, sprite) |
+### How to Target Dell Monitor (Godot)
+- **EIS X range**: 0 to 1536
+- **EIS Y range**: 796 to 1660
+- **Center point**: (768, 1228)
+- **Title bar area**: y ~800-850
+- **Content area**: y ~850-1600
 
-**Visual characteristics**: Muted colors, desaturated, cruder polygons
+## AI Interaction Workflow
 
-#### Modern Assets
-**Pattern**: `T_UI_*` prefix (150 UI sprites confirmed)
+```bash
+# 1. Capture current state
+./tools/godot-harness/ai-monitor-capture capture
 
-### RNG System (For Slider Mod)
-- **Core function**: `get_three_building_choices()` in `CityScreen.gd`
-- **Rarity weights**: Based on `Structure.Rarities` enum (0=Common, 1=Uncommon, 2=Rare)
-- **Modifiers**: Perks like SolarPunk, UncommonBuildings, RareBuildings
-- **Detailed analysis**: `docs/RNG_SYSTEM_ANALYSIS.md`
+# 2. Analyze screenshot for target coordinates
+# (EIS coords = physical coords in region [1])
 
-### Display Setup
-- **Samsung TV**: HDMI-A-5, 1920x1080@60Hz, 125% scale
-- **Position in native pixels**: ~(0, 3280) in combined screenshot
-- **Godot Editor**: Running on Samsung TV, fullscreen
-- **Panels**: Left sidebar, bottom taskbar (visible in captures)
+# 3. Click at identified position
+./tools/portal-input/target/release/portal-input eis-send -x 400 -y 1000 --click
+
+# 4. Verify result
+./tools/godot-harness/ai-monitor-capture capture
+```
 
 ## Pending Tasks
 
 ### High Priority
-1. **Refine Samsung TV capture coordinates** - Still has some bleed from monitor above
-2. **Visual prologue asset sorting** - Need to see assets beyond `lame_*` pattern
-3. **RNG Slider Mod** - UI to adjust tile appearance frequency and rarity
+1. **Daemon mode for portal-input** - Avoid repeated consent dialogs
+2. **Keyboard input via EIS** - Add key subcommand
+3. **RNG Slider Mod** - UI to adjust tile appearance frequency
 
 ### Medium Priority
-4. **stl-next Integration** - Design in `docs/STL_NEXT_INTEGRATION.md`
-5. **Linux Native Port** - Steam stub allows non-Steam builds
-
-### Lower Priority
-6. **More prologue identification** - Many assets without `lame_*` still prologue-style
+4. **Complete Linux port testing** - Game should run natively
+5. **stl-next Integration** - Godot PCK mod management
 
 ## Key Files
 
-### Documentation
-- `docs/TECHNICAL_RESEARCH.md` - Engine/format findings
-- `docs/RNG_SYSTEM_ANALYSIS.md` - Building selection logic
-- `docs/ART_GUIDELINES.md` - Faction colors, style guide
-- `docs/LINUX_PORT_ANALYSIS.md` - Native Linux feasibility
-- `docs/STL_NEXT_INTEGRATION.md` - Mod manager design
+### New/Updated This Session
+- `docs/AI_INTERACTION_STRATEGIES.md` - Full EIS documentation
+- `tools/portal-input/` - EIS input tool (Rust)
+- `tools/godot-harness/ai-monitor-capture` - Updated for Dell monitor
+- `tools/godot-harness/ai-monitor-config.json` - Dell monitor coordinates
 
 ### Critical Scripts (in recovered/)
 - `scripts/CityScreen.gd` - Main game logic, RNG
 - `scripts/structure.gd` - Building properties
-- `scripts/data_map.gd` - Game state management
 - `player/godot_steam.gd` - Steam stub (modified)
 
 ### Faction Colors
@@ -109,26 +125,25 @@
 ## Quick Commands
 
 ```bash
-# Capture Samsung TV (doesn't steal focus)
-./tools/godot-harness/samsung-capture capture
+# Take screenshot of Godot on Dell monitor
+./tools/godot-harness/ai-monitor-capture capture
+
+# Test EIS input - move and shake
+./tools/portal-input/target/release/portal-input eis-send -x 768 -y 1200 --shake
+
+# Test EIS input - move and click
+./tools/portal-input/target/release/portal-input eis-send -x 768 -y 1000 --click
 
 # Get project info
 ./tools/godot-harness/gdharness info
-
-# List buildings with RNG data
-./tools/godot-harness/gdharness list-structures | jq '.structures[:5]'
-
-# Analyze prologue assets
-./tools/godot-harness/asset-catalog analyze
 
 # Open Godot editor
 godot --editor recovered/
 ```
 
 ## Session Notes
-- User prefers dialog prompts over full message stops
-- Playwright MCP too token-heavy for this workflow
-- 6 monitors total, Samsung TV is for AI visual work
-- NixOS with KDE Plasma Wayland
-- Original 4.3 backup exists at `neongarten-(4.3)/` (gitignored)
-
+- **EIS/libei**: Successfully implemented for Wayland input injection
+- **KDE Limitation**: RemoteDesktop sessions can't persist (consent each time)
+- **Workaround Needed**: Daemon mode to keep session alive
+- **User prefers**: Dialog prompts over full message stops
+- **Dell Monitor**: Now the primary AI interaction display

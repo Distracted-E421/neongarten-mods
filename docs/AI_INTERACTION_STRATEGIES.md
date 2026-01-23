@@ -1,215 +1,200 @@
-# AI Interaction Strategies for Godot
+# AI Interaction Strategies for Godot Editor
 
-## The Core Challenge
+This document outlines the current capabilities and limitations for AI interaction with the Godot editor, particularly focusing on operating within a Wayland environment where direct input to unfocused windows is restricted.
 
-**Wayland security model** prevents applications from:
-- Sending input to windows they don't own
-- Grabbing keyboard/mouse without user consent
-- Interacting with windows without focus
+## ✅ WORKING: EIS (Emulated Input System) via Portals
 
-This is by design - prevents keyloggers and click-jacking. But it makes AI-driven GUI automation hard.
+**Status: FULLY FUNCTIONAL as of January 2026**
 
-## Available Approaches
+We have successfully implemented unfocused input injection using the XDG Desktop Portal's RemoteDesktop interface with EIS (Emulated Input System).
 
-### 1. File-Based Interaction (Best for Modding) ✅
+### How It Works
 
-**How it works**: Modify Godot project files directly; Godot auto-reloads.
+1. **Portal Request**: The AI requests RemoteDesktop access via D-Bus portal
+2. **User Consent**: User approves the one-time consent dialog (per session)
+3. **EIS Connection**: Portal provides an EIS socket for input injection
+4. **Direct Input**: AI can send absolute pointer motion, clicks, and keyboard input
 
-**Pros**:
-- No focus needed
-- Works on any Wayland/X11/WM
-- Fast and reliable
-- Perfect for modding workflow
-
-**What we can do**:
-- Modify `.tres` resource files (building stats, perks)
-- Edit `.gd` scripts
-- Change `.tscn` scene files
-- Swap asset files
-
-**Example**:
-```bash
-# Change a building's income
-sed -i 's/income = 1/income = 5/' recovered/structures/bar.tres
-# Godot will auto-reload if watching files
-```
-
-### 2. Godot CLI/Headless Mode ✅
-
-**How it works**: Run Godot commands without GUI.
-
-**Pros**:
-- No focus needed
-- Can run scripts, export, validate
-- Good for batch operations
-
-**Commands**:
-```bash
-# Validate project
-godot --headless --check-only --path recovered/
-
-# Run a custom script
-godot --headless --path recovered/ --script scripts/export_data.gd
-
-# Export project
-godot --headless --path recovered/ --export-release "Linux" output/game
-```
-
-### 3. D-Bus/KWin Scripting (KDE-Specific)
-
-**How it works**: KDE exposes some window management via D-Bus.
-
-**Pros**:
-- Can resize, move, minimize windows
-- Query window properties
-
-**Limitations**:
-- Cannot send keystrokes/clicks to specific windows
-- KDE-only
-
-**Example**:
-```bash
-# List windows
-qdbus org.kde.KWin /KWin org.kde.KWin.queryWindowInfo
-
-# Move window to specific desktop
-qdbus org.kde.KWin /KWin org.kde.KWin.sendToDesktop <window_id> 2
-```
-
-### 4. ydotool (Limited)
-
-**How it works**: Virtual input device that sends events to focused window.
-
-**Limitations**:
-- Sends input to **currently focused** window only
-- Must steal focus, defeating the purpose
-
-### 5. Nested Compositor/VNC (Complex)
-
-**How it works**: Run Godot inside a nested Wayland/X11 session, interact via VNC.
-
-**Pros**:
-- Full interaction capability
-- Isolated from main session
-
-**Cons**:
-- Complex setup
-- Performance overhead
-- Needs dedicated resources
-
-**Setup**:
-```bash
-# Start nested Wayland with Godot
-cage godot --editor recovered/ &
-
-# Connect via VNC or wayvnc
-wayvnc 0.0.0.0 5900
-```
-
-### 6. Godot Editor Plugin (Future Possibility)
-
-**How it works**: Create an editor plugin that exposes a socket/HTTP API.
-
-**Pros**:
-- Direct editor control
-- Can do anything the editor can
-- Works on any platform
-
-**Cons**:
-- Requires development
-- Must maintain compatibility with Godot versions
-
-**Concept**:
-```gdscript
-# addons/ai_bridge/ai_bridge.gd
-extends EditorPlugin
-
-var server := TCPServer.new()
-
-func _enter_tree():
-    server.listen(9999)
-
-func _process(_delta):
-    if server.is_connection_available():
-        var client = server.take_connection()
-        var command = client.get_string()
-        execute_command(command)
-        client.put_string("OK")
-
-func execute_command(cmd: String):
-    match cmd.split(" ")[0]:
-        "open_scene": EditorInterface.open_scene_from_path(cmd.split(" ")[1])
-        "select_node": # etc
-```
-
-## Recommended Strategy for Neongarten Modding
-
-### Immediate (No Focus Needed)
-
-1. **Screenshot** → `ai-monitor-capture` (working ✅)
-2. **Read project data** → `gdharness list-structures/list-scenes`
-3. **Modify resources** → Direct file editing (`.tres`, `.gd`, `.tscn`)
-4. **Batch operations** → Godot `--headless` mode
-
-### For Visual Asset Inspection
-
-1. Take screenshot with `ai-monitor-capture`
-2. Analyze what's visible
-3. **Ask user to navigate** via dialog: "Please click on sprites folder"
-4. Screenshot again
-
-### Future Enhancement
-
-Build a **Godot Editor Plugin** that:
-- Listens on a local port
-- Accepts JSON commands
-- Returns screenshots/data
-- Can navigate FileSystem, select nodes, etc.
-
-## WM-Independent Solution
-
-The **file-based approach** works everywhere:
-
-| WM | Screenshot | File Edit | Godot CLI |
-|----|-----------|-----------|-----------|
-| KDE Plasma | spectacle -b | ✅ | ✅ |
-| Hyprland | grim | ✅ | ✅ |
-| Sway | grim | ✅ | ✅ |
-| GNOME | gnome-screenshot | ✅ | ✅ |
-| X11 (any) | import/scrot | ✅ | ✅ |
-
-### Making Screenshot WM-Independent
+### Working Commands
 
 ```bash
-#!/usr/bin/env bash
-# Universal screenshot tool
+# Check portal status
+./tools/portal-input/target/release/portal-input status
 
-if command -v spectacle &>/dev/null; then
-    spectacle -b -f -o "$1"  # KDE
-elif command -v grim &>/dev/null; then
-    grim "$1"  # wlroots (Hyprland, Sway)
-elif command -v gnome-screenshot &>/dev/null; then
-    gnome-screenshot -f "$1"  # GNOME
-elif command -v import &>/dev/null; then
-    import -window root "$1"  # X11 (ImageMagick)
-elif command -v scrot &>/dev/null; then
-    scrot "$1"  # X11 fallback
-else
-    echo "No screenshot tool found"
-    exit 1
-fi
+# View EIS regions and coordinate mapping
+./tools/portal-input/target/release/portal-input eis
+
+# Move cursor to absolute position
+./tools/portal-input/target/release/portal-input eis-send -x 768 -y 1200
+
+# Move and click
+./tools/portal-input/target/release/portal-input eis-send -x 768 -y 1200 --click
+
+# Move with visual shake (for debugging)
+./tools/portal-input/target/release/portal-input eis-send -x 768 -y 1200 --shake
 ```
 
-## Summary
+### Monitor Region Mapping (Current System)
 
-| Need | Solution | Focus Required |
-|------|----------|----------------|
-| See Godot state | Screenshot | ❌ No |
-| Modify game data | Edit .tres files | ❌ No |
-| Run scripts | Godot --headless | ❌ No |
-| Export game | Godot --export | ❌ No |
-| Click UI buttons | User action via dialog | ✅ Yes |
-| Navigate FileSystem | User action OR future plugin | ✅ Yes |
+From EIS device regions:
 
-**Bottom line**: For modding, we can do 90% of work without focus. For navigation, we ask the user via dialog when needed.
+| Region | X | Y | Width | Height | Scale | Description |
+|----|----|----|----|----|----|-----|
+| [0] | 1536 | 700 | 1707 | 960 | 1.5 | Main monitor (center) |
+| [1] | 0 | 796 | 1536 | 864 | 1.25 | Dell E2420H (top-left, AI monitor) |
+| [2] | 4323 | 796 | 1080 | 1920 | 1.0 | Right portrait monitor |
+| [3] | 0 | 1660 | 1536 | 864 | 1.25 | Samsung TV (bottom-left) |
+| [4] | 1536 | 1660 | 1536 | 864 | 1.25 | Bottom-center |
+| [5] | 3243 | 0 | 1080 | 1920 | 1.0 | Top-right portrait |
 
+### Dell Monitor (AI Monitor) - Region [1]
+
+- **EIS Coordinates**: x: 0-1536, y: 796-1660
+- **Physical Resolution**: 1920x1080 (at 1.25 scale)
+- **Center point**: (768, 1228)
+- **Top area** (title bars): y ~800-850
+- **Content area**: y ~850-1600
+
+## Current Capabilities
+
+### 1. Visual Observation (Screenshots)
+- **Tool**: `./tools/godot-harness/ai-monitor-capture capture`
+- **Method**: `grim` (Wayland native), region-cropped
+- **Coordinates**: Dell monitor at (0, 1570) for 3070x1750 region
+- **Use**: See the current state of Godot editor
+
+### 2. Absolute Pointer Motion (EIS)
+- **Tool**: `portal-input eis-send -x X -y Y`
+- **Coordinate System**: EIS region coordinates (see table above)
+- **Use**: Move cursor to specific UI elements
+
+### 3. Mouse Clicks (EIS)
+- **Tool**: `portal-input eis-send -x X -y Y --click`
+- **Use**: Click buttons, select items, interact with UI
+
+### 4. Keyboard Input (EIS)
+- **Status**: Available via EIS keyboard device
+- **Not yet implemented in CLI** - requires adding key subcommand
+
+### 5. Direct File Manipulation
+- **Tool**: Standard CLI tools (cat, sed, grep, etc.)
+- **Use**: Edit GDScript, .tres resources, .tscn scenes
+- **Benefit**: Godot auto-reloads on file changes
+
+## Workflow for AI-Assisted Modding
+
+1. **Take Screenshot**: Capture Dell monitor to see Godot state
+2. **Analyze UI**: Identify coordinates of target elements
+3. **Send Input**: Use EIS to click/interact with identified elements
+4. **Verify**: Take another screenshot to confirm action
+
+### Example: Click a Button
+
+```bash
+# 1. Capture current state
+./tools/godot-harness/ai-monitor-capture capture
+
+# 2. Analyze screenshot to find button coordinates (in EIS region space)
+# Dell monitor is region [1], so coords are relative to (0, 796) + scaled
+
+# 3. Click at the identified position
+./tools/portal-input/target/release/portal-input eis-send -x 400 -y 1000 --click
+
+# 4. Verify
+./tools/godot-harness/ai-monitor-capture capture
+```
+
+## Limitations
+
+### Consent Dialog
+- **Issue**: KDE doesn't support persistent RemoteDesktop sessions
+- **Impact**: Each new portal-input invocation requires user consent
+- **Workaround**: Future daemon mode to keep session alive
+
+### Coordinate Translation
+- EIS coordinates use a scaled coordinate system
+- Must account for monitor scale factor (1.25 for Dell)
+- Regions have offset positions that must be added
+
+### Response Time
+- Portal setup takes ~1-2 seconds per session
+- EIS handshake adds ~0.5 seconds
+- Not suitable for rapid-fire interactions
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│ KDE Plasma / Wayland                            │
+│                                                 │
+│  ┌─────────────┐    ┌────────────────────────┐  │
+│  │ Cursor IDE  │    │ XDG Desktop Portal     │  │
+│  │ (AI Agent)  │    │                        │  │
+│  │             │    │  ┌──────────────────┐  │  │
+│  │ portal-input├────┼──│ RemoteDesktop    │  │  │
+│  │             │    │  │  ├─ EIS Socket   │  │  │
+│  │             │    │  │  └─ Screencast   │  │  │
+│  └─────────────┘    │  └──────────────────┘  │  │
+│                     └────────────────────────┘  │
+│                                                 │
+│  ┌─────────────────┐                            │
+│  │ Godot Editor    │  ← Receives EIS input      │
+│  │ (Dell Monitor)  │    without needing focus   │
+│  └─────────────────┘                            │
+└─────────────────────────────────────────────────┘
+```
+
+## Technical Implementation
+
+### Key Libraries
+- **ashpd**: Rust async XDG portal client
+- **reis**: Rust EIS (Emulated Input System) protocol implementation
+- **grim**: Wayland screenshot tool
+
+### EIS Protocol Flow
+1. Connect to portal RemoteDesktop
+2. Request device selection (keyboard + pointer)
+3. Request screencast (for coordinate info)
+4. Get EIS socket via `connect_to_eis()`
+5. Perform EIS handshake (negotiate interfaces)
+6. Bind seat capabilities (pointer_absolute, button, etc.)
+7. Wait for device events
+8. Start emulating → send input → frame → stop emulating
+
+### Button Codes (Linux input-event-codes.h)
+- **BTN_LEFT**: 272 (0x110)
+- **BTN_RIGHT**: 273 (0x111)
+- **BTN_MIDDLE**: 274 (0x112)
+
+## Future Enhancements
+
+### 1. Daemon Mode
+Keep portal session alive for multiple operations:
+- Start daemon on first call
+- Subsequent calls communicate via socket/pipe
+- Eliminates consent dialog for each interaction
+
+### 2. Keyboard Input CLI
+Add keyboard subcommand:
+```bash
+portal-input eis-key --text "Hello"
+portal-input eis-key --keycode 28  # Enter
+```
+
+### 3. Godot Editor Plugin
+Direct control without EIS:
+- Plugin exposes HTTP/WebSocket API
+- AI sends commands like `{"action": "open_scene", "path": "res://..."}`
+- Plugin executes internally
+
+### 4. Region Auto-Detection
+Detect which EIS region corresponds to which physical monitor:
+- Match region dimensions to display outputs
+- Auto-calculate EIS coordinates from physical coords
+
+## References
+
+- [XDG Desktop Portal Spec](https://flatpak.github.io/xdg-desktop-portal/)
+- [libei/libeis](https://gitlab.freedesktop.org/libinput/libei)
+- [reis crate](https://crates.io/crates/reis)
+- [ashpd crate](https://crates.io/crates/ashpd)

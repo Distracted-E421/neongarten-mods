@@ -1,331 +1,172 @@
-# Wayland Input Workarounds - Research & Implementation
+# Wayland Input Workarounds for Unfocused Interaction
 
-## The Problem
+**Status**: ✅ WORKING - EIS via Portal implemented successfully!
 
-Wayland's security model prevents:
-- Sending input to windows without focus
-- Applications reading/writing to other windows
-- Global hotkey registration without compositor support
+This document explores potential solutions and our successful implementation to bypass Wayland's security model, which prevents sending synthetic input to unfocused windows.
 
-This is intentional security, but breaks legitimate automation use cases.
+## ✅ SOLUTION: XDG Desktop Portal + EIS
 
-## Available Solutions (NixOS Packages)
+**This approach is working and recommended.**
 
-### Tier 1: Works Today
+### Implementation
 
-#### 1. `ydotool` - Virtual Input Device
+We successfully implemented unfocused input using:
+
+1. **XDG Desktop Portal** - `org.freedesktop.portal.RemoteDesktop`
+2. **EIS (Emulated Input System)** - `libei` protocol via `reis` Rust crate
+3. **ashpd** - Async XDG portal client for Rust
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────┐
+│ Portal Request Flow                              │
+│                                                  │
+│ 1. RemoteDesktop.create_session()               │
+│ 2. RemoteDesktop.select_devices(keyboard+ptr)   │
+│ 3. Screencast.select_sources(monitors)          │
+│ 4. RemoteDesktop.start() → User consent dialog  │
+│ 5. RemoteDesktop.connect_to_eis() → Socket FD   │
+│                                                  │
+│ EIS Handshake Flow                               │
+│                                                  │
+│ 6. Send handshake_version, name, context_type   │
+│ 7. Negotiate interfaces (pointer_absolute, etc) │
+│ 8. Receive Connection event                     │
+│ 9. Receive SeatAdded event                      │
+│ 10. Call seat.bind_capabilities()               │
+│ 11. Receive DeviceAdded event(s)                │
+│ 12. Receive DeviceResumed event                 │
+│                                                  │
+│ Input Injection                                  │
+│                                                  │
+│ 13. device.start_emulating(serial, seq)         │
+│ 14. pointer_abs.motion_absolute(x, y)           │
+│ 15. button.button(272, Press/Released)          │
+│ 16. device.frame(serial, timestamp)             │
+│ 17. device.stop_emulating(serial)               │
+└─────────────────────────────────────────────────┘
+```
+
+### Tool: `portal-input`
+
+Location: `tools/portal-input/`
 
 ```bash
-# Install
-nix-shell -p ydotool
+# Build
+cargo build --release
 
-# Requires ydotoold daemon running as root
-sudo ydotoold &
+# Test EIS connection and see regions
+cargo run -- eis
 
-# Then send input (goes to FOCUSED window)
-ydotool type "Hello World"
-ydotool click 0x40  # left click
-ydotool mousemove 100 200
+# Send input (move cursor)
+cargo run -- eis-send -x 768 -y 1200
+
+# Send input (move and click)
+cargo run -- eis-send -x 768 -y 1200 --click
+
+# Send input (shake for visibility)
+cargo run -- eis-send -x 768 -y 1200 --shake
 ```
 
-**Limitation**: Input goes to currently focused window only.
+### EIS Coordinates
 
-#### 2. `dotool` - uinput-based Input Simulation
+EIS uses a regional coordinate system where each monitor/output is a "region" with:
+- `x`, `y` - Position in combined virtual space
+- `width`, `height` - Logical size
+- `scale` - Physical to logical scale factor
+
+**Example regions (current system):**
+```
+[0] x:1536, y:700, 1707x960 @ scale 1.5  - Main monitor
+[1] x:0, y:796, 1536x864 @ scale 1.25    - Dell (AI monitor)
+```
+
+To target a position on the Dell monitor:
+- X: 0-1536 (center = 768)
+- Y: 796-1660 (center = 1228)
+
+### Limitations
+
+1. **No Session Persistence**: KDE doesn't support persistent RemoteDesktop sessions
+   - Each `portal-input` invocation shows consent dialog
+   - Workaround: Daemon mode (future implementation)
+
+2. **Coordinate System**: Requires understanding of EIS regions
+   - Must map physical screen positions to EIS coordinates
+   - Regions have offsets and scale factors
+
+## Alternative Approaches (Not Implemented)
+
+### Nested Compositors
+
+Running Godot inside `gamescope` or `cage` provides full control:
 
 ```bash
-# Install
-nix-shell -p dotool
-
-# Requires uinput access (add user to input group or run as root)
-echo "type hello" | dotool
-echo "click left" | dotool
+# gamescope - runs app in isolated Wayland session
+gamescope -W 1920 -H 1080 -- godot --editor ~/neongarten-mods/recovered/
 ```
 
-**Limitation**: Same as ydotool - focused window only.
+**Pros**: Full input control within the nested session
+**Cons**: Additional complexity, need to inject input into nested compositor
 
-#### 3. `kdotool` - KDE-Specific xdotool Clone
+### VNC (wayvnc)
 
 ```bash
-# Install (KDE Plasma only)
-nix-shell -p kdotool
-
-# Can interact with KDE D-Bus for some operations
-kdotool search --name "Godot"  # Find window
-kdotool windowactivate <window_id>  # Focus window
+# Start VNC server on Wayland
+wayvnc 0.0.0.0 5900
 ```
 
-**Advantage**: Can programmatically focus windows before sending input.
-**Limitation**: Still requires focus for actual input.
+**Pros**: Full remote control
+**Cons**: Network overhead, extra setup
 
-#### 4. `wtype` - Wayland Type Tool
+### Direct Tools (Require Focus)
 
-```bash
-# Install
-nix-shell -p wtype
+- **ydotool**: Generic input simulation, requires focus
+- **kdotool**: KDE-specific xdotool clone, requires focus
 
-# Type text (requires focus)
-wtype "Hello"
-wtype -k Return  # Press enter
+These don't work for unfocused interaction on Wayland.
+
+## Key Libraries
+
+### ashpd (Rust)
+- Async XDG Desktop Portal client
+- Handles D-Bus communication
+- Portal session management
+
+```rust
+let remote_desktop = RemoteDesktop::new().await?;
+let session = remote_desktop.create_session().await?;
+remote_desktop.select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer, None, PersistMode::DoNot).await?;
 ```
 
-**Limitation**: Focused window only.
+### reis (Rust)
+- Pure Rust EIS/libeis protocol implementation
+- Handles EIS handshake and event processing
+- Provides device interfaces for input injection
 
-### Tier 2: Nested Compositor Approach ⭐ RECOMMENDED
-
-The only way to send input to an unfocused application is to run it in its own compositor where you control focus.
-
-#### Option A: `cage` - Single-App Wayland Kiosk
-
-```bash
-# Run Godot in its own isolated Wayland session
-cage -- godot --editor ~/neongarten-mods/recovered/ &
-
-# Now you can:
-# 1. Screenshot this compositor (separate from main desktop)
-# 2. Send input via wayvnc
-# 3. The app always has "focus" within its compositor
+```rust
+let context = reis::ei::Context::new(socket)?;
+let mut handshaker = EiHandshaker::new("my-app", ContextType::Sender);
+// ... handle events ...
+let pointer_abs: PointerAbsolute = device.interface().unwrap();
+pointer_abs.motion_absolute(x, y);
 ```
 
-**Setup**:
-```bash
-# Create a script to launch Godot in cage
-#!/usr/bin/env bash
-export WLR_NO_HARDWARE_CURSORS=1  # If needed
-cage -s -- godot --editor "$1"
-```
+## Button Codes
 
-#### Option B: `gamescope` - Gaming-Oriented Compositor
+Linux input-event-codes.h button values:
 
-Valve's SteamOS compositor, designed for running games in isolation.
+| Button | Code | Hex |
+|--------|------|-----|
+| BTN_LEFT | 272 | 0x110 |
+| BTN_RIGHT | 273 | 0x111 |
+| BTN_MIDDLE | 274 | 0x112 |
 
-```bash
-# Run Godot in gamescope
-gamescope -W 1920 -H 1080 -- godot --editor ~/neongarten-mods/recovered/ &
+## References
 
-# gamescope provides:
-# - Isolated compositor
-# - Scaling/filtering
-# - Screen capture integration
-```
-
-**Advantages**:
-- Specifically designed for this use case (Steam Deck)
-- Good performance
-- Can embed in parent compositor
-
-#### Option C: `wayvnc` - VNC into Nested Compositor
-
-```bash
-# Start cage with wayvnc
-cage -- godot --editor ~/neongarten-mods/recovered/ &
-wayvnc 0.0.0.0 5900  # Expose VNC server
-
-# Now connect with any VNC client and send input remotely
-# This gives FULL input control without focus issues
-```
-
-### Tier 3: D-Bus/Portal APIs
-
-Modern Wayland has portal APIs for screen sharing and remote input, but support varies.
-
-#### `xdg-desktop-portal` Remote Desktop
-
-```bash
-# Check if available
-dbus-send --session --print-reply \
-  --dest=org.freedesktop.portal.Desktop \
-  /org/freedesktop/portal/desktop \
-  org.freedesktop.DBus.Introspectable.Introspect
-```
-
-KDE Plasma has `org.kde.KWin` D-Bus interface but input control is limited.
-
-## Recommended Architecture for Godot AI Harness
-
-### Phase 1: Nested Compositor Setup
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Main KDE Session (Obsidian Desktop)                 │
-│                                                     │
-│  ┌──────────────────────┐  ┌─────────────────────┐  │
-│  │ Cursor IDE           │  │ cage/gamescope      │  │
-│  │ (AI Agent here)      │  │ ┌─────────────────┐ │  │
-│  │                      │  │ │ Godot Editor    │ │  │
-│  │                      │  │ │ (isolated)      │ │  │
-│  │ AI → Commands ─────────→ │                 │ │  │
-│  │                      │  │ └─────────────────┘ │  │
-│  │ Screenshot ←──────────── [capture]           │  │
-│  └──────────────────────┘  └─────────────────────┘  │
-│                                                     │
-│  Dell Monitor            AI Monitor (dedicated)     │
-└─────────────────────────────────────────────────────┘
-```
-
-### Phase 2: Input Bridge
-
-```bash
-# Create input bridge script
-#!/usr/bin/env bash
-# ai-godot-input - Send input to nested Godot
-
-GODOT_SOCKET=/tmp/godot-input.sock
-
-case "$1" in
-  click)
-    # Focus the cage window, send click, return focus
-    kdotool windowactivate $(kdotool search --name "cage") 
-    ydotool click 0x40
-    kdotool windowactivate $(kdotool search --name "Cursor")
-    ;;
-  type)
-    kdotool windowactivate $(kdotool search --name "cage")
-    ydotool type "$2"
-    kdotool windowactivate $(kdotool search --name "Cursor")
-    ;;
-  navigate)
-    # Custom Godot-specific commands via editor plugin
-    ;;
-esac
-```
-
-### Phase 3: Godot Editor Plugin
-
-For the smoothest experience, build a Godot editor plugin that:
-
-1. Listens on a TCP/Unix socket
-2. Accepts JSON commands
-3. Executes editor operations programmatically
-4. Returns screenshots/state
-
-This bypasses all Wayland restrictions because Godot does the work internally.
-
-```gdscript
-# addons/ai_bridge/ai_bridge.gd
-@tool
-extends EditorPlugin
-
-var server: TCPServer
-var port: int = 9876
-
-func _enter_tree():
-    server = TCPServer.new()
-    server.listen(port)
-    print("[AI Bridge] Listening on port %d" % port)
-
-func _process(_delta):
-    if server.is_connection_available():
-        var client = server.take_connection()
-        handle_client(client)
-
-func handle_client(client: StreamPeerTCP):
-    var json = client.get_string()
-    var cmd = JSON.parse_string(json)
-    
-    var result = {}
-    match cmd.action:
-        "screenshot":
-            # Capture viewport and save
-            var img = get_editor_interface().get_edited_scene_root().get_viewport().get_texture().get_image()
-            img.save_png("/tmp/godot_screenshot.png")
-            result = {"path": "/tmp/godot_screenshot.png"}
-        "open_scene":
-            get_editor_interface().open_scene_from_path(cmd.path)
-            result = {"success": true}
-        "select_node":
-            var node = get_editor_interface().get_edited_scene_root().get_node(cmd.path)
-            get_editor_interface().edit_node(node)
-            result = {"success": true}
-        "get_selected":
-            var selected = get_editor_interface().get_selection().get_selected_nodes()
-            result = {"nodes": selected.map(func(n): return n.name)}
-        "navigate_filesystem":
-            get_editor_interface().get_file_system_dock().navigate_to_path(cmd.path)
-            result = {"success": true}
-    
-    client.put_string(JSON.stringify(result))
-```
-
-## NixOS Configuration
-
-Add to your system/home configuration:
-
-```nix
-# For nested compositor approach
-environment.systemPackages = with pkgs; [
-  cage        # Single-app compositor
-  gamescope   # Gaming compositor
-  wayvnc      # VNC server
-  ydotool     # Input simulation
-  kdotool     # KDE-specific automation
-];
-
-# Enable ydotool service
-services.ydotool.enable = true;
-
-# Or with Home Manager
-programs.ydotool = {
-  enable = true;
-};
-```
-
-## Quick Start Commands
-
-### Option 1: Gamescope (Recommended for Performance)
-
-```bash
-# Start Godot in gamescope
-gamescope -W 1920 -H 1080 -o 15 -- godot --editor ~/neongarten-mods/recovered/
-
-# -W/-H: resolution
-# -o: FPS limit (reduce overhead)
-```
-
-### Option 2: Cage + VNC (Full Remote Control)
-
-```bash
-# Terminal 1: Start cage with Godot
-cage -- godot --editor ~/neongarten-mods/recovered/
-
-# Terminal 2: Start VNC server
-wayvnc 127.0.0.1 5900
-
-# Now use any VNC client to interact
-# Or use libvncserver bindings for programmatic control
-```
-
-### Option 3: Focus-Swap Method (Simple but Disruptive)
-
-```bash
-# ai-click.sh - Click at coordinates, return focus
-#!/usr/bin/env bash
-GODOT_WIN=$(kdotool search --name "Godot Engine")
-CURSOR_WIN=$(kdotool search --name "Cursor")
-
-kdotool windowactivate $GODOT_WIN
-sleep 0.1
-ydotool mousemove --absolute $1 $2
-ydotool click 0x40
-sleep 0.1
-kdotool windowactivate $CURSOR_WIN
-```
-
-## Summary
-
-| Approach | Focus Required | Full Control | Performance | Complexity |
-|----------|---------------|--------------|-------------|------------|
-| ydotool/dotool | Yes | No | Best | Low |
-| kdotool + focus swap | Brief | Yes | Good | Medium |
-| gamescope | No | Yes | Good | Medium |
-| cage + wayvnc | No | Yes | OK | Medium |
-| Editor plugin | No | Full | Best | High |
-
-**Recommendation**: Start with **gamescope** for isolated Godot + **kdotool** for focus management. Add **editor plugin** later for seamless integration.
-
-## Next Steps
-
-1. Test gamescope with Godot on dedicated monitor
-2. Build focus-swap helper script
-3. Design editor plugin API
-4. Integrate with ai-monitor-capture tool
-
+- [XDG Desktop Portal Spec](https://flatpak.github.io/xdg-desktop-portal/)
+- [libei/libeis](https://gitlab.freedesktop.org/libinput/libei)
+- [reis crate](https://crates.io/crates/reis)
+- [ashpd crate](https://crates.io/crates/ashpd)
+- [input-event-codes.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h)
