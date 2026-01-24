@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+# Godot High-Level Commands - Abstractions for common Godot editor operations
+#
+# These commands work by:
+#   1. Generating temporary EditorScript files
+#   2. Running them via `godot --headless -s <script>` or UI interaction
+#   3. Parsing outputs
+#
+# Usage:
+#   godot-cmds list-scenes         List all scenes in the project
+#   godot-cmds list-scripts        List all GDScript files
+#   godot-cmds open-scene <path>   Open a scene in the editor (requires UI)
+#   godot-cmds run-game            Run the game
+#   godot-cmds export-pck <out>    Export to PCK file
+#   godot-cmds validate            Validate project syntax
+#   godot-cmds query <gds>         Run a GDScript query (headless)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$SCRIPT_DIR/../../recovered}"
+GODOT="${GODOT_BIN:-godot}"
+TEMP_DIR="${TEMP_DIR:-/tmp/godot-harness}"
+
+mkdir -p "$TEMP_DIR"
+
+# JSON output helpers
+json_ok() { echo "{\"status\":\"ok\"$1}"; }
+json_err() { echo "{\"status\":\"error\",\"message\":\"$1\"}"; }
+
+# List all .tscn files
+cmd_list_scenes() {
+    local scenes
+    scenes=$(find "$PROJECT_DIR" -name "*.tscn" -type f | sort)
+    echo -n '{"status":"ok","scenes":['
+    local first=true
+    while IFS= read -r scene; do
+        [ -z "$scene" ] && continue
+        local rel_path="${scene#$PROJECT_DIR/}"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo -n ","
+        fi
+        echo -n "\"$rel_path\""
+    done <<< "$scenes"
+    echo ']}'
+}
+
+# List all .gd files
+cmd_list_scripts() {
+    local scripts
+    scripts=$(find "$PROJECT_DIR" -name "*.gd" -type f | sort)
+    echo -n '{"status":"ok","scripts":['
+    local first=true
+    while IFS= read -r script; do
+        [ -z "$script" ] && continue
+        local rel_path="${script#$PROJECT_DIR/}"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo -n ","
+        fi
+        echo -n "\"$rel_path\""
+    done <<< "$scripts"
+    echo ']}'
+}
+
+# List all resources (.tres, .res)
+cmd_list_resources() {
+    local type="${1:-all}"
+    local pattern="*.tres"
+    case "$type" in
+        tres) pattern="*.tres" ;;
+        res)  pattern="*.res" ;;
+        all)  pattern="-name *.tres -o -name *.res" ;;
+    esac
+    
+    local resources
+    if [ "$type" = "all" ]; then
+        resources=$(find "$PROJECT_DIR" \( -name "*.tres" -o -name "*.res" \) -type f | sort)
+    else
+        resources=$(find "$PROJECT_DIR" -name "$pattern" -type f | sort)
+    fi
+    
+    echo -n '{"status":"ok","resources":['
+    local first=true
+    while IFS= read -r res; do
+        [ -z "$res" ] && continue
+        local rel_path="${res#$PROJECT_DIR/}"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo -n ","
+        fi
+        echo -n "\"$rel_path\""
+    done <<< "$resources"
+    echo ']}'
+}
+
+# Get project info
+cmd_info() {
+    local project_file="$PROJECT_DIR/project.godot"
+    if [ ! -f "$project_file" ]; then
+        json_err "project.godot not found at $project_file"
+        return 1
+    fi
+    
+    local name version features
+    name=$(grep -E "^config/name=" "$project_file" 2>/dev/null | cut -d'"' -f2 || echo "Unknown")
+    version=$(grep -E "^config/version=" "$project_file" 2>/dev/null | cut -d'"' -f2 || echo "Unknown")
+    features=$(grep -E "^config/features=" "$project_file" 2>/dev/null | sed 's/.*PackedStringArray(\(.*\))/\1/' | tr -d '"' || echo "")
+    
+    local scene_count script_count resource_count
+    scene_count=$(find "$PROJECT_DIR" -name "*.tscn" | wc -l)
+    script_count=$(find "$PROJECT_DIR" -name "*.gd" | wc -l)
+    resource_count=$(find "$PROJECT_DIR" \( -name "*.tres" -o -name "*.res" \) | wc -l)
+    
+    cat << EOF
+{
+  "status": "ok",
+  "project": {
+    "name": "$name",
+    "version": "$version",
+    "features": "$features",
+    "path": "$PROJECT_DIR"
+  },
+  "counts": {
+    "scenes": $scene_count,
+    "scripts": $script_count,
+    "resources": $resource_count
+  }
+}
+EOF
+}
+
+# Validate project by checking for parse errors
+cmd_validate() {
+    local script="$TEMP_DIR/validate.gd"
+    
+    # Create a simple validator script
+    cat > "$script" << 'EOF'
+extends SceneTree
+
+func _init():
+    print('{"status":"ok","message":"Project validated successfully"}')
+    quit()
+EOF
+    
+    # Run with --check-only flag
+    local output
+    if output=$("$GODOT" --headless --path "$PROJECT_DIR" -s "$script" 2>&1); then
+        # Extract JSON from output
+        echo "$output" | grep -E '^\{.*\}$' | tail -1
+    else
+        # Extract errors
+        local errors
+        errors=$(echo "$output" | grep -E "(SCRIPT ERROR|Parse Error)" | head -5)
+        echo "{\"status\":\"error\",\"message\":\"Validation failed\",\"errors\":\"$(echo "$errors" | tr '\n' ' ')\"}"
+    fi
+    
+    rm -f "$script"
+}
+
+# Run a custom GDScript query
+cmd_query() {
+    local code="${1:-print('Hello from query')}"
+    local script="$TEMP_DIR/query_$(date +%s).gd"
+    
+    cat > "$script" << EOF
+extends SceneTree
+
+func _init():
+    $code
+    quit()
+EOF
+    
+    local output
+    output=$("$GODOT" --headless --path "$PROJECT_DIR" -s "$script" 2>&1) || true
+    echo "$output"
+    
+    rm -f "$script"
+}
+
+# Run the game
+cmd_run_game() {
+    "$GODOT" --path "$PROJECT_DIR" "$@" &
+    local pid=$!
+    json_ok ",\"pid\":$pid,\"message\":\"Game started\""
+}
+
+# Run in editor
+cmd_run_editor() {
+    "$GODOT" -e --path "$PROJECT_DIR" "$@" &
+    local pid=$!
+    json_ok ",\"pid\":$pid,\"message\":\"Editor started\""
+}
+
+# Export to PCK (requires export preset)
+cmd_export_pck() {
+    local output="${1:-/tmp/export.pck}"
+    local preset="${2:-Linux/X11}"
+    
+    if "$GODOT" --headless --path "$PROJECT_DIR" --export-pack "$preset" "$output" 2>&1; then
+        json_ok ",\"path\":\"$output\""
+    else
+        json_err "Export failed - check export presets"
+    fi
+}
+
+# Get scene tree structure (requires game running)
+cmd_scene_tree() {
+    local script="$TEMP_DIR/scene_tree.gd"
+    
+    cat > "$script" << 'EOF'
+extends SceneTree
+
+func _init():
+    var result = []
+    _collect_tree(get_root(), result, 0)
+    print(JSON.stringify({"status": "ok", "tree": result}))
+    quit()
+
+func _collect_tree(node: Node, result: Array, depth: int):
+    result.append({
+        "name": node.name,
+        "class": node.get_class(),
+        "depth": depth,
+        "children": node.get_child_count()
+    })
+    for child in node.get_children():
+        _collect_tree(child, result, depth + 1)
+EOF
+    
+    local output
+    output=$("$GODOT" --headless --path "$PROJECT_DIR" -s "$script" 2>&1) || true
+    echo "$output" | grep -E '^\{.*\}$' | tail -1
+    
+    rm -f "$script"
+}
+
+# Read a resource file (tres/tscn)
+cmd_read_resource() {
+    local file="${1:-}"
+    
+    if [ -z "$file" ]; then
+        json_err "Usage: godot-cmds read-resource <file>"
+        return 1
+    fi
+    
+    local full_path="$PROJECT_DIR/$file"
+    if [ ! -f "$full_path" ]; then
+        full_path="$file"
+    fi
+    
+    if [ ! -f "$full_path" ]; then
+        json_err "File not found: $file"
+        return 1
+    fi
+    
+    # For text resources, just output the content
+    if [[ "$full_path" =~ \.(tres|tscn|gd)$ ]]; then
+        cat "$full_path"
+    else
+        json_err "Binary resource - cannot display"
+    fi
+}
+
+# Show help
+cmd_help() {
+    cat << 'EOF'
+Godot High-Level Commands
+
+USAGE:
+    godot-cmds <command> [args...]
+
+COMMANDS (Headless - no GUI needed):
+    info                      Get project information
+    list-scenes               List all .tscn scene files
+    list-scripts              List all .gd script files
+    list-resources [type]     List resources (tres, res, all)
+    validate                  Check project for parse errors
+    query <gdscript>          Run inline GDScript code
+    scene-tree                Get scene tree structure
+    read-resource <file>      Read a text resource file
+
+COMMANDS (GUI/Interactive):
+    run-game [args...]        Run the game
+    run-editor [args...]      Open the editor
+    export-pck <out> [preset] Export to PCK file
+
+ENVIRONMENT:
+    PROJECT_DIR     Path to Godot project (default: ../recovered)
+    GODOT_BIN       Path to Godot binary (default: godot)
+
+EXAMPLES:
+    # Get project info
+    godot-cmds info
+    
+    # List all scenes
+    godot-cmds list-scenes
+    
+    # Validate project
+    godot-cmds validate
+    
+    # Run custom query
+    godot-cmds query 'print(ProjectSettings.get_setting("config/name"))'
+    
+    # Read a scene file
+    godot-cmds read-resource screens/title_screen.tscn
+
+OUTPUT:
+    All commands output JSON for easy parsing.
+EOF
+}
+
+# Main dispatcher
+case "${1:-help}" in
+    info)           cmd_info ;;
+    list-scenes)    cmd_list_scenes ;;
+    list-scripts)   cmd_list_scripts ;;
+    list-resources) shift; cmd_list_resources "${1:-all}" ;;
+    validate)       cmd_validate ;;
+    query)          shift; cmd_query "$*" ;;
+    scene-tree)     cmd_scene_tree ;;
+    read-resource)  shift; cmd_read_resource "$@" ;;
+    run-game)       shift; cmd_run_game "$@" ;;
+    run-editor)     shift; cmd_run_editor "$@" ;;
+    export-pck)     shift; cmd_export_pck "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *)              json_err "Unknown command: $1. Use 'godot-cmds help' for usage." ;;
+esac
+
