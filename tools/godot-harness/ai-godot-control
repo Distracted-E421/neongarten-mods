@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# AI Godot Control - High-level control interface for Godot editor
+#
+# Combines portal-input (unfocused input) with ai-monitor-capture (screenshots)
+# to enable AI agents to interact with the Godot editor programmatically.
+#
+# Usage:
+#   ai-godot-control start          Start the daemon (requires consent)
+#   ai-godot-control stop           Stop the daemon
+#   ai-godot-control status         Check daemon status
+#   ai-godot-control screenshot     Capture current editor state
+#   ai-godot-control move X Y       Move cursor to position
+#   ai-godot-control click X Y      Click at position
+#   ai-godot-control type TEXT      Type text
+#   ai-godot-control key CODE       Press key by code
+#   ai-godot-control scroll DX DY   Scroll (DY: positive=down, negative=up)
+#   ai-godot-control regions        Show EIS coordinate regions
+#
+# Environment:
+#   AI_MONITOR_CONFIG   Path to monitor config (default: auto-detect)
+#   PORTAL_INPUT_BIN    Path to portal-input binary
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORTAL_INPUT="${PORTAL_INPUT_BIN:-$SCRIPT_DIR/../portal-input/target/release/portal-input}"
+AI_CAPTURE="${SCRIPT_DIR}/ai-monitor-capture"
+DAEMON_PID_FILE="/tmp/ai-godot-daemon.pid"
+DAEMON_FIFO="/tmp/ai-godot-input"
+DAEMON_OUTPUT="/tmp/ai-godot-output"
+SCREENSHOT_DIR="${SCREENSHOT_DIR:-/tmp/godot-screenshots}"
+
+# Color output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+
+# Check if daemon is running
+is_running() {
+    [ -f "$DAEMON_PID_FILE" ] && kill -0 "$(cat "$DAEMON_PID_FILE")" 2>/dev/null
+}
+
+# Start the daemon
+cmd_start() {
+    if is_running; then
+        warn "Daemon already running (PID: $(cat "$DAEMON_PID_FILE"))"
+        return 0
+    fi
+    
+    info "Starting AI Godot Control daemon..."
+    info "⚠️  Please approve the consent dialog when it appears!"
+    
+    # Ensure output dir exists
+    mkdir -p "$SCREENSHOT_DIR"
+    
+    # Create FIFO if needed
+    [ -p "$DAEMON_FIFO" ] || mkfifo "$DAEMON_FIFO"
+    
+    # Start daemon in background, reading from FIFO
+    # Output goes to both stdout (for JSON) and a file (for later reading)
+    (
+        exec tail -f "$DAEMON_FIFO" | "$PORTAL_INPUT" daemon 2>&1 | tee "$DAEMON_OUTPUT"
+    ) &
+    local DAEMON_PID=$!
+    echo $DAEMON_PID > "$DAEMON_PID_FILE"
+    
+    # Wait for ready signal
+    info "Waiting for daemon to be ready..."
+    for i in {1..30}; do
+        if [ -f "$DAEMON_OUTPUT" ] && grep -q '"status":"ready"' "$DAEMON_OUTPUT" 2>/dev/null; then
+            success "Daemon started (PID: $DAEMON_PID)"
+            # Show regions
+            cmd_regions 2>/dev/null || true
+            return 0
+        fi
+        sleep 1
+    done
+    
+    error "Daemon failed to start within 30 seconds"
+}
+
+# Stop the daemon
+cmd_stop() {
+    if ! is_running; then
+        warn "Daemon not running"
+        return 0
+    fi
+    
+    info "Stopping daemon..."
+    echo "quit" > "$DAEMON_FIFO"
+    sleep 1
+    
+    if is_running; then
+        kill "$(cat "$DAEMON_PID_FILE")" 2>/dev/null || true
+    fi
+    
+    rm -f "$DAEMON_PID_FILE" "$DAEMON_FIFO" "$DAEMON_OUTPUT"
+    success "Daemon stopped"
+}
+
+# Check status
+cmd_status() {
+    if is_running; then
+        local PID=$(cat "$DAEMON_PID_FILE")
+        echo '{"status":"running","pid":'$PID'}'
+    else
+        echo '{"status":"stopped"}'
+    fi
+}
+
+# Send command to daemon
+send_cmd() {
+    if ! is_running; then
+        error "Daemon not running. Start with: ai-godot-control start"
+    fi
+    
+    # Clear previous output
+    > "$DAEMON_OUTPUT"
+    
+    # Send command
+    echo "$*" > "$DAEMON_FIFO"
+    
+    # Wait for response (up to 5 seconds)
+    for i in {1..50}; do
+        if [ -s "$DAEMON_OUTPUT" ]; then
+            # Get last JSON line
+            tail -1 "$DAEMON_OUTPUT"
+            return 0
+        fi
+        sleep 0.1
+    done
+    
+    echo '{"status":"error","message":"timeout waiting for response"}'
+}
+
+# Take screenshot
+cmd_screenshot() {
+    local OUTPUT="${1:-}"
+    if [ -z "$OUTPUT" ]; then
+        OUTPUT="$SCREENSHOT_DIR/godot-$(date +%Y%m%d-%H%M%S).png"
+    fi
+    
+    if [ -x "$AI_CAPTURE" ]; then
+        "$AI_CAPTURE" "$OUTPUT"
+        if [ -f "$OUTPUT" ]; then
+            echo "{\"status\":\"ok\",\"action\":\"screenshot\",\"path\":\"$OUTPUT\"}"
+        else
+            echo '{"status":"error","message":"screenshot capture failed"}'
+        fi
+    else
+        # Fallback to spectacle
+        spectacle -rno "$OUTPUT" 2>/dev/null
+        if [ -f "$OUTPUT" ]; then
+            echo "{\"status\":\"ok\",\"action\":\"screenshot\",\"path\":\"$OUTPUT\"}"
+        else
+            echo '{"status":"error","message":"screenshot capture failed (spectacle)"}'
+        fi
+    fi
+}
+
+# Move cursor
+cmd_move() {
+    [ $# -ge 2 ] || error "Usage: ai-godot-control move X Y"
+    send_cmd "move $1 $2"
+}
+
+# Click
+cmd_click() {
+    [ $# -ge 2 ] || error "Usage: ai-godot-control click X Y"
+    send_cmd "click $1 $2"
+}
+
+# Right click
+cmd_rclick() {
+    [ $# -ge 2 ] || error "Usage: ai-godot-control rclick X Y"
+    send_cmd "rclick $1 $2"
+}
+
+# Type text
+cmd_type() {
+    [ $# -ge 1 ] || error "Usage: ai-godot-control type TEXT"
+    send_cmd "type $*"
+}
+
+# Press key
+cmd_key() {
+    [ $# -ge 1 ] || error "Usage: ai-godot-control key KEYCODE"
+    send_cmd "key $1"
+}
+
+# Key down
+cmd_keydown() {
+    [ $# -ge 1 ] || error "Usage: ai-godot-control keydown KEYCODE"
+    send_cmd "keydown $1"
+}
+
+# Key up
+cmd_keyup() {
+    [ $# -ge 1 ] || error "Usage: ai-godot-control keyup KEYCODE"
+    send_cmd "keyup $1"
+}
+
+# Scroll
+cmd_scroll() {
+    [ $# -ge 2 ] || error "Usage: ai-godot-control scroll DX DY"
+    send_cmd "scroll $1 $2"
+}
+
+# Get regions
+cmd_regions() {
+    send_cmd "regions"
+}
+
+# Show help
+cmd_help() {
+    cat << 'EOF'
+AI Godot Control - Unfocused input and screenshot capture for Godot editor
+
+USAGE:
+    ai-godot-control <command> [args...]
+
+COMMANDS:
+    start               Start the input daemon (requires one-time consent)
+    stop                Stop the daemon
+    status              Check if daemon is running
+    screenshot [PATH]   Capture screenshot (default: /tmp/godot-screenshots/)
+    
+    move X Y            Move cursor to absolute position
+    click X Y           Left-click at position  
+    rclick X Y          Right-click at position
+    scroll DX DY        Scroll (DY: positive=down, negative=up)
+    
+    type TEXT           Type text (ASCII)
+    key KEYCODE         Press and release key
+    keydown KEYCODE     Press key down
+    keyup KEYCODE       Release key
+    
+    regions             Show EIS coordinate regions
+    help                Show this help
+
+COORDINATE SYSTEM:
+    Coordinates are in EIS virtual space. Run 'regions' to see monitor mappings.
+    
+    Example regions for a multi-monitor setup:
+      Region 0 (Samsung TV): x:0, y:0, 3840x2160 @ scale 2.0
+      Region 1 (Dell E2420H): x:0, y:1080, 1920x1080 @ scale 1.25
+
+COMMON KEYCODES:
+    Enter=28  Space=57  Tab=15  Escape=1  Backspace=14
+    Ctrl=29   Shift=42  Alt=56  Super=125
+    F1-F12 = 59-70
+    Arrows: Up=103  Down=108  Left=105  Right=106
+    
+    Letters: a=30 s=31 d=32 f=33 g=34 h=35 j=36 k=37 l=38
+             q=16 w=17 e=18 r=19 t=20 y=21 u=22 i=23 o=24 p=25
+             z=44 x=45 c=46 v=47 b=48 n=49 m=50
+
+WORKFLOW EXAMPLE:
+    # Start daemon (do once per session)
+    ai-godot-control start
+    
+    # Navigate to a scene
+    ai-godot-control click 200 300    # Click on FileSystem panel
+    ai-godot-control type main.tscn   # Type scene name
+    ai-godot-control key 28           # Press Enter
+    
+    # Take screenshot for analysis
+    ai-godot-control screenshot /tmp/editor-state.png
+    
+    # When done
+    ai-godot-control stop
+EOF
+}
+
+# Main dispatcher
+case "${1:-help}" in
+    start)      cmd_start ;;
+    stop)       cmd_stop ;;
+    status)     cmd_status ;;
+    screenshot) shift; cmd_screenshot "$@" ;;
+    move)       shift; cmd_move "$@" ;;
+    click)      shift; cmd_click "$@" ;;
+    rclick)     shift; cmd_rclick "$@" ;;
+    type)       shift; cmd_type "$@" ;;
+    key)        shift; cmd_key "$@" ;;
+    keydown)    shift; cmd_keydown "$@" ;;
+    keyup)      shift; cmd_keyup "$@" ;;
+    scroll)     shift; cmd_scroll "$@" ;;
+    regions)    cmd_regions ;;
+    help|--help|-h) cmd_help ;;
+    *)          error "Unknown command: $1. Run 'ai-godot-control help' for usage." ;;
+esac
+

@@ -623,13 +623,33 @@ async fn run_daemon() -> ashpd::Result<()> {
     let device = abs_device.expect("No absolute device found");
     let pointer_abs: reis::ei::PointerAbsolute = device.interface().expect("No PointerAbsolute");
     let button_iface: Option<reis::ei::Button> = device.interface();
+    let keyboard_iface: Option<reis::ei::Keyboard> = device.interface();
+    let scroll_iface: Option<reis::ei::Scroll> = device.interface();
     let ei_device = device.device();
     
+    let has_keyboard = keyboard_iface.is_some();
+    let has_scroll = scroll_iface.is_some();
     eprintln!("\n✓ Daemon ready! Listening on stdin...");
-    eprintln!("Commands: move X Y | click X Y | quit");
-    eprintln!("Example: move 768 1200");
-    eprintln!("Example: click 768 1000");
+    eprintln!("Commands:");
+    eprintln!("  move X Y       - Move cursor to position");
+    eprintln!("  click X Y      - Move and left-click");
+    eprintln!("  rclick X Y     - Move and right-click");
+    eprintln!("  scroll DX DY   - Scroll (negative Y = scroll up)");
+    eprintln!("  key KEYCODE    - Press and release a key (Linux keycode)");
+    eprintln!("  keydown CODE   - Press key down");
+    eprintln!("  keyup CODE     - Release key");
+    eprintln!("  type TEXT      - Type text (basic ASCII)");
+    eprintln!("  regions        - List EIS regions");
+    eprintln!("  quit           - Exit daemon");
     eprintln!();
+    if has_keyboard {
+        eprintln!("✓ Keyboard available");
+    } else {
+        eprintln!("⚠ Keyboard not available (pointer-only mode)");
+    }
+    if has_scroll {
+        eprintln!("✓ Scroll available");
+    }
     
     // Signal ready with JSON
     println!("{{\"status\":\"ready\",\"serial\":{}}}",serial);
@@ -725,6 +745,128 @@ async fn run_daemon() -> ashpd::Result<()> {
                 }
                 println!("{{\"status\":\"ok\",\"action\":\"rclick\",\"x\":{},\"y\":{}}}",x,y);
             }
+            "scroll" if parts.len() >= 3 => {
+                let dx: i32 = parts[1].parse().unwrap_or(0);
+                let dy: i32 = parts[2].parse().unwrap_or(0);
+                if let Some(ref scrl) = scroll_iface {
+                    // Use discrete scroll (wheel clicks): 120 units = 1 wheel click
+                    // DX: positive = right, negative = left
+                    // DY: positive = down, negative = up
+                    scrl.scroll_discrete(dx * 120, dy * 120);
+                    serial += 1;
+                    ei_device.frame(serial, now);
+                    context.flush().ok();
+                    println!("{{\"status\":\"ok\",\"action\":\"scroll\",\"dx\":{},\"dy\":{}}}",dx,dy);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"scroll not available\"}}");
+                }
+            }
+            "scrollpx" if parts.len() >= 3 => {
+                // Smooth/pixel-precise scroll
+                let dx: f32 = parts[1].parse().unwrap_or(0.0);
+                let dy: f32 = parts[2].parse().unwrap_or(0.0);
+                if let Some(ref scrl) = scroll_iface {
+                    scrl.scroll(dx, dy);
+                    // Signal scroll stop (x_stop, y_stop, is_cancel)
+                    scrl.scroll_stop(1, 1, 0);
+                    serial += 1;
+                    ei_device.frame(serial, now);
+                    context.flush().ok();
+                    println!("{{\"status\":\"ok\",\"action\":\"scrollpx\",\"dx\":{},\"dy\":{}}}",dx,dy);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"scroll not available\"}}");
+                }
+            }
+            "key" if parts.len() >= 2 => {
+                let keycode: u32 = parts[1].parse().unwrap_or(0);
+                if let Some(ref kbd) = keyboard_iface {
+                    kbd.key(keycode, reis::ei::keyboard::KeyState::Press);
+                    serial += 1;
+                    ei_device.frame(serial, now);
+                    context.flush().ok();
+                    
+                    std::thread::sleep(Duration::from_millis(50));
+                    
+                    kbd.key(keycode, reis::ei::keyboard::KeyState::Released);
+                    serial += 1;
+                    ei_device.frame(serial, now + 50_000);
+                    context.flush().ok();
+                    println!("{{\"status\":\"ok\",\"action\":\"key\",\"keycode\":{}}}",keycode);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"keyboard not available\"}}");
+                }
+            }
+            "keydown" if parts.len() >= 2 => {
+                let keycode: u32 = parts[1].parse().unwrap_or(0);
+                if let Some(ref kbd) = keyboard_iface {
+                    kbd.key(keycode, reis::ei::keyboard::KeyState::Press);
+                    serial += 1;
+                    ei_device.frame(serial, now);
+                    context.flush().ok();
+                    println!("{{\"status\":\"ok\",\"action\":\"keydown\",\"keycode\":{}}}",keycode);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"keyboard not available\"}}");
+                }
+            }
+            "keyup" if parts.len() >= 2 => {
+                let keycode: u32 = parts[1].parse().unwrap_or(0);
+                if let Some(ref kbd) = keyboard_iface {
+                    kbd.key(keycode, reis::ei::keyboard::KeyState::Released);
+                    serial += 1;
+                    ei_device.frame(serial, now);
+                    context.flush().ok();
+                    println!("{{\"status\":\"ok\",\"action\":\"keyup\",\"keycode\":{}}}",keycode);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"keyboard not available\"}}");
+                }
+            }
+            "type" if parts.len() >= 2 => {
+                // Type text by converting ASCII to keycodes
+                // This is a simplified mapping - full Unicode would need more complex handling
+                let text = parts[1..].join(" ");
+                if let Some(ref kbd) = keyboard_iface {
+                    for ch in text.chars() {
+                        if let Some((keycode, shift)) = char_to_keycode(ch) {
+                            // Press shift if needed
+                            if shift {
+                                kbd.key(42, reis::ei::keyboard::KeyState::Press); // Left Shift
+                                serial += 1;
+                                ei_device.frame(serial, now);
+                                context.flush().ok();
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            
+                            // Press key
+                            kbd.key(keycode, reis::ei::keyboard::KeyState::Press);
+                            serial += 1;
+                            ei_device.frame(serial, now);
+                            context.flush().ok();
+                            std::thread::sleep(Duration::from_millis(20));
+                            
+                            // Release key
+                            kbd.key(keycode, reis::ei::keyboard::KeyState::Released);
+                            serial += 1;
+                            ei_device.frame(serial, now);
+                            context.flush().ok();
+                            
+                            // Release shift if needed
+                            if shift {
+                                std::thread::sleep(Duration::from_millis(10));
+                                kbd.key(42, reis::ei::keyboard::KeyState::Released);
+                                serial += 1;
+                                ei_device.frame(serial, now);
+                                context.flush().ok();
+                            }
+                            
+                            std::thread::sleep(Duration::from_millis(30));
+                        }
+                    }
+                    let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"");
+                    println!("{{\"status\":\"ok\",\"action\":\"type\",\"text\":\"{}\"}}",escaped_text);
+                } else {
+                    println!("{{\"status\":\"error\",\"message\":\"keyboard not available\"}}");
+                }
+            }
             "regions" => {
                 print!("{{\"status\":\"ok\",\"action\":\"regions\",\"regions\":[");
                 for (i, region) in device.regions().iter().enumerate() {
@@ -733,6 +875,9 @@ async fn run_daemon() -> ashpd::Result<()> {
                         i, region.x, region.y, region.width, region.height, region.scale);
                 }
                 println!("]}}");
+            }
+            "help" => {
+                println!("{{\"status\":\"ok\",\"action\":\"help\",\"commands\":[\"move X Y\",\"click X Y\",\"rclick X Y\",\"scroll DX DY\",\"scrollpx DX DY\",\"key KEYCODE\",\"keydown CODE\",\"keyup CODE\",\"type TEXT\",\"regions\",\"quit\"]}}");
             }
             "quit" | "exit" => {
                 if emulating {
@@ -751,6 +896,73 @@ async fn run_daemon() -> ashpd::Result<()> {
     
     eprintln!("\nDaemon shutting down...");
     Ok(())
+}
+
+/// Convert ASCII character to Linux keycode and whether shift is needed
+/// Returns (keycode, needs_shift)
+fn char_to_keycode(ch: char) -> Option<(u32, bool)> {
+    // Linux input event codes from linux/input-event-codes.h
+    match ch {
+        // Letters (lowercase = no shift, uppercase = shift)
+        'a' => Some((30, false)),  'A' => Some((30, true)),
+        'b' => Some((48, false)),  'B' => Some((48, true)),
+        'c' => Some((46, false)),  'C' => Some((46, true)),
+        'd' => Some((32, false)),  'D' => Some((32, true)),
+        'e' => Some((18, false)),  'E' => Some((18, true)),
+        'f' => Some((33, false)),  'F' => Some((33, true)),
+        'g' => Some((34, false)),  'G' => Some((34, true)),
+        'h' => Some((35, false)),  'H' => Some((35, true)),
+        'i' => Some((23, false)),  'I' => Some((23, true)),
+        'j' => Some((36, false)),  'J' => Some((36, true)),
+        'k' => Some((37, false)),  'K' => Some((37, true)),
+        'l' => Some((38, false)),  'L' => Some((38, true)),
+        'm' => Some((50, false)),  'M' => Some((50, true)),
+        'n' => Some((49, false)),  'N' => Some((49, true)),
+        'o' => Some((24, false)),  'O' => Some((24, true)),
+        'p' => Some((25, false)),  'P' => Some((25, true)),
+        'q' => Some((16, false)),  'Q' => Some((16, true)),
+        'r' => Some((19, false)),  'R' => Some((19, true)),
+        's' => Some((31, false)),  'S' => Some((31, true)),
+        't' => Some((20, false)),  'T' => Some((20, true)),
+        'u' => Some((22, false)),  'U' => Some((22, true)),
+        'v' => Some((47, false)),  'V' => Some((47, true)),
+        'w' => Some((17, false)),  'W' => Some((17, true)),
+        'x' => Some((45, false)),  'X' => Some((45, true)),
+        'y' => Some((21, false)),  'Y' => Some((21, true)),
+        'z' => Some((44, false)),  'Z' => Some((44, true)),
+        
+        // Numbers (top row)
+        '1' => Some((2, false)),   '!' => Some((2, true)),
+        '2' => Some((3, false)),   '@' => Some((3, true)),
+        '3' => Some((4, false)),   '#' => Some((4, true)),
+        '4' => Some((5, false)),   '$' => Some((5, true)),
+        '5' => Some((6, false)),   '%' => Some((6, true)),
+        '6' => Some((7, false)),   '^' => Some((7, true)),
+        '7' => Some((8, false)),   '&' => Some((8, true)),
+        '8' => Some((9, false)),   '*' => Some((9, true)),
+        '9' => Some((10, false)),  '(' => Some((10, true)),
+        '0' => Some((11, false)),  ')' => Some((11, true)),
+        
+        // Punctuation and special
+        '-' => Some((12, false)),  '_' => Some((12, true)),
+        '=' => Some((13, false)),  '+' => Some((13, true)),
+        '[' => Some((26, false)),  '{' => Some((26, true)),
+        ']' => Some((27, false)),  '}' => Some((27, true)),
+        '\\' => Some((43, false)), '|' => Some((43, true)),
+        ';' => Some((39, false)),  ':' => Some((39, true)),
+        '\'' => Some((40, false)), '"' => Some((40, true)),
+        '`' => Some((41, false)),  '~' => Some((41, true)),
+        ',' => Some((51, false)),  '<' => Some((51, true)),
+        '.' => Some((52, false)),  '>' => Some((52, true)),
+        '/' => Some((53, false)),  '?' => Some((53, true)),
+        
+        // Whitespace
+        ' ' => Some((57, false)),   // Space
+        '\t' => Some((15, false)),  // Tab
+        '\n' => Some((28, false)),  // Enter
+        
+        _ => None,
+    }
 }
 
 async fn run_shake_test() -> ashpd::Result<()> {

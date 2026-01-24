@@ -48,10 +48,23 @@ echo -e "move 768 1200\nclick 500 900\nquit" | ./target/release/portal-input dae
 ```
 
 Commands accepted in daemon mode:
+
+**Pointer:**
 - `move X Y` - Move cursor to absolute position
 - `click X Y` - Move and left-click
 - `rclick X Y` - Move and right-click
+- `scroll DX DY` - Discrete scroll (wheel clicks, DY positive=down)
+- `scrollpx DX DY` - Smooth pixel-precise scroll
+
+**Keyboard:**
+- `key KEYCODE` - Press and release a key (Linux input keycode)
+- `keydown KEYCODE` - Press key down (hold)
+- `keyup KEYCODE` - Release key
+- `type TEXT` - Type text (basic ASCII, handles shift automatically)
+
+**Other:**
 - `regions` - List available regions
+- `help` - List available commands
 - `quit` - Exit daemon
 
 All commands output JSON responses:
@@ -59,8 +72,29 @@ All commands output JSON responses:
 {"status":"ready","serial":2}
 {"status":"ok","action":"move","x":768,"y":1200}
 {"status":"ok","action":"click","x":500,"y":900}
+{"status":"ok","action":"key","keycode":28}
+{"status":"ok","action":"type","text":"Hello World"}
 {"status":"ok","action":"regions","regions":[{"id":0,"x":1536,"y":700,"w":1707,"h":960,"scale":1.5},...]}
 ```
+
+### Common Keycodes (Linux input-event-codes)
+
+| Key | Code | Key | Code |
+|-----|------|-----|------|
+| Escape | 1 | Enter | 28 |
+| Tab | 15 | Space | 57 |
+| Backspace | 14 | Delete | 111 |
+| Left Arrow | 105 | Right Arrow | 106 |
+| Up Arrow | 103 | Down Arrow | 108 |
+| Home | 102 | End | 107 |
+| Page Up | 104 | Page Down | 109 |
+| F1-F12 | 59-70 | Ctrl (L) | 29 |
+| Shift (L) | 42 | Alt (L) | 56 |
+| Super/Meta | 125 | | |
+
+Letters: a=30, b=48, c=46, d=32, e=18, f=33, g=34, h=35, i=23, j=36, k=37, l=38, m=50, n=49, o=24, p=25, q=16, r=19, s=31, t=20, u=22, v=47, w=17, x=45, y=21, z=44
+
+Numbers: 1=2, 2=3, 3=4, 4=5, 5=6, 6=7, 7=8, 8=9, 9=10, 0=11
 
 ## Coordinate System
 
