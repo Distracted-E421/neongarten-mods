@@ -1,5 +1,9 @@
 # Neongarten Mods
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Godot](https://img.shields.io/badge/Godot-4.3-blue.svg)](https://godotengine.org/)
+[![NixOS](https://img.shields.io/badge/NixOS-flake-blue.svg)](flake.nix)
+
 Community modding toolkit for **Neongarten** - a minimalist cyberpunk city builder by Moonroof Studios.
 
 ## 🎮 About Neongarten
